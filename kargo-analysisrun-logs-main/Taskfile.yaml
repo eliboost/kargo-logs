@@ -1,0 +1,592 @@
+# This file is generated with create-go-app: do not edit.
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+#
+# You can include task files with the following:
+# 1. create a file Taskfile-<some-name>.yaml
+# 2. create-go-app update
+#
+# More info relating taskfile: https://taskfile.dev
+
+version: '3'
+
+env:
+  PROJECT_RELEASE: 1
+  DOCKER_IMAGE_PREFIX: local
+  DOCKER_PATH_PREFIX: pf
+  CI_PROJECT_URL: http://localhost
+  CAL_VERSION:
+    sh: date -u '+%Y%m%d%H%M%S'
+  GO_VERSION:
+    sh: go version | awk '{print $3;}'
+
+# Use the following file to add secrets as environment variables
+# Example format:
+#
+# PASSWORD=passord
+dotenv:
+  - .env
+
+vars:
+  STRIP_TAG_PREFIX: helm/v
+  CHANGELOG_FILE: CHANGELOG.md
+  NEXT_VERSION:
+    sh: git-cliff --bumped-version --tag-pattern='^v[0-9].*' 2>/dev/null || echo "v0.1.0"
+  INSTALL_DIR: '{{.HOME}}/bin'
+  LOCAL_BIN: ./bin
+  LOCAL_GORELEASER: '{{ .LOCAL_BIN }}/goreleaser'
+  LOCAL_GOLANGCI: '{{ .LOCAL_BIN }}/golangci-lint'
+  GOLANGCI: 2.12.2
+  GORELEASER: 2.17.0
+  SYFT: 1.49.0
+  GOTESTSUM: 1.13.0
+  GORELEASER_BIN:
+    sh: 'if [ -x {{ .LOCAL_GORELEASER }} ]; then echo {{ .LOCAL_GORELEASER }}; else echo goreleaser; fi'
+  GOLANGCI_BIN:
+    sh: 'if [ -x {{ .LOCAL_GOLANGCI }} ]; then echo {{ .LOCAL_GOLANGCI }}; else echo golangci-lint; fi'
+  BINARIES:
+    sh: find ./dist ! -name '*goreleaserdocker*' -path '*_{{ OS }}_*' -type f -executable | xargs echo
+  PROFILE_DIR: profiles
+
+tasks:
+  run:
+    preconditions:
+      - sh: command -v fzf
+        msg: command 'fzf' not found
+    vars:
+      MAIN_DIR:
+        sh: find . -path ./vendor -prune -o -type f -name '*.go' -exec grep -l 'package main' {} + | xargs dirname  | sort -u | fzf --no-mouse
+    desc: Run the project.
+    cmds:
+      - go run {{ .MAIN_DIR }} {{ .CLI_ARGS }}
+
+  run-debug:
+    preconditions:
+      - sh: command -v fzf
+        msg: command 'fzf' not found
+      - sh: command -v dlv
+        msg: command 'dlv' not found
+    vars:
+      MAIN_DIR:
+        sh: find . -type f -name '*.go' -exec grep -l 'package main' {} + | xargs dirname | fzf --no-mouse
+    desc: Run the project.
+    cmds:
+      - cmd: echo run dlv connect :9090 to connect
+        silent: true
+      - dlv debug --headless -l :9090 {{ .MAIN_DIR }} -- {{ .CLI_ARGS }}
+
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Build ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  default:
+    preconditions:
+      - sh: test -x {{ .LOCAL_GORELEASER }} || command -v goreleaser
+        msg: command 'goreleaser' not found (checked {{ .LOCAL_BIN }}/ and PATH)
+    desc: Build a snapshot.
+    cmds:
+      - echo $GO_VERSION
+      - git tag -l "{{.STRIP_TAG_PREFIX}}*" | xargs git tag -d
+      - '{{ .GORELEASER_BIN }} build --clean --snapshot'
+
+  snapshot:
+    preconditions:
+      - sh: test -x {{ .LOCAL_GORELEASER }} || command -v goreleaser
+        msg: command 'goreleaser' not found (checked {{ .LOCAL_BIN }}/ and PATH)
+      - sh: command -v docker
+        msg: command 'docker' not found
+    desc: Release a snapshot.
+    cmds:
+      - '{{ .GORELEASER_BIN }} release --snapshot --clean --skip=sign'
+
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Dependencies ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  deps-tidy:
+    desc: Runs go mod tidy and go mod vendor for vendored projects.
+    aliases: [tidy]
+    cmds:
+      - go mod tidy
+      - if [ -d vendor ]; then go mod vendor; fi
+      - go mod verify
+
+  deps:
+    desc: List dependencies that are eligible for updates.
+    cmds:
+      - "go list --mod=readonly -u -f '{{`{{`}}if (and (not (or .Main .Indirect)) .Update){{`}}`}}{{`{{`}}.Path{{`}}`}}: {{`{{`}}.Version{{`}}`}} -> {{`{{`}}.Update.Version{{`}}`}}{{`{{`}}end{{`}}`}}' -m all"
+
+  deps-graph:
+    desc: Shows dependency graph in a browser tab.
+    preconditions:
+      - sh: command -v dot
+        msg: command 'dot' not found
+      - sh: command -v xdg-open
+        msg: command 'xdg-open' not found
+    cmds:
+      - |
+        go list -f '{{`{{`}}.ImportPath{{`}}`}} {{`{{`}}join .Imports " "{{`}}`}}' ./... |
+        grep "^$(go list -m)/" |
+        {
+          echo "digraph G {"
+          while read -r LINE; do
+            PACKAGE=$(echo $LINE | awk '{print $1}')
+            IMPORTS=$(echo $LINE | cut -d' ' -f2-)
+            for IMPORT in $IMPORTS; do
+              if [[ $IMPORT == $(go list -m)/* ]]; then
+                echo "  \"$PACKAGE\" -> \"$IMPORT\";"
+              fi
+            done
+          done
+          echo "}"
+        } | dot -Tsvg -o /tmp/import_graph.svg
+      - xdg-open  /tmp/import_graph.svg
+      - defer: sleep 2 && rm -f /tmp/import_graph.svg
+
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Test ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  test:
+    desc: Run tests.
+    cmds:
+      - go generate ./...
+      - go test -count=1 ./... {{ .CLI_ARGS }}
+
+  test-func:
+    desc: Run a test function. Pass name to filter (runs directly if unique) or omit to choose with fzf.
+    aliases: [testf]
+    vars:
+      _DIR_AND_FUNC:
+        sh: |
+          PATTERN=""
+          for arg in {{ .CLI_ARGS }}; do
+            case "$arg" in
+              -*) ;;
+              *) if [ ! -d "$arg" ]; then PATTERN="$arg"; fi ;;
+            esac
+          done
+          ALL=$(find . -name "*_test.go" | while IFS= read -r file; do
+            grep -h "^func Test" "$file" | sed -E 's/^func (Test[^(]+).*/\1/' | awk -v dir="$(dirname "$file")" '{print dir ":" $1}';
+          done | sort)
+          if [ -n "$PATTERN" ]; then
+            FILTERED=$(echo "$ALL" | grep "$PATTERN" || true)
+            COUNT=$(echo "$FILTERED" | grep -c . || true)
+            if [ "$COUNT" -eq 1 ]; then
+              echo "$FILTERED"
+              exit 0
+            elif [ "$COUNT" -gt 1 ]; then
+              command -v fzf > /dev/null 2>&1 || { echo "error: command 'fzf' not found" >&2; exit 1; }
+              echo "$FILTERED" | fzf --no-mouse
+              exit 0
+            fi
+          fi
+          command -v fzf > /dev/null 2>&1 || { echo "error: command 'fzf' not found" >&2; exit 1; }
+          echo "$ALL" | fzf --no-mouse
+      _DIR:
+        sh: |
+          IFS=':' read -r directory testFuncName <<< "{{ ._DIR_AND_FUNC }}"
+          echo $directory
+      _FUNC:
+        sh: |
+          IFS=':' read -r directory testFuncName <<< "{{ ._DIR_AND_FUNC }}"
+          echo $testFuncName
+      _ARGS:
+        sh: |
+          for arg in {{ .CLI_ARGS }}; do
+            case "$arg" in
+              -*) printf "%s " "$arg" ;;
+            esac
+          done
+    cmds:
+      - go test -v -count=1 -run '^{{ ._FUNC }}$' {{ ._DIR }} {{ ._ARGS }}
+
+  test-dir:
+    desc: Run tests in a directory. Pass it as argument (task testd -- ./dir) or omit to choose with fzf.
+    aliases: [testd]
+    vars:
+      _DIR:
+        sh: |
+          for arg in {{ .CLI_ARGS }}; do
+            if [ -d "$arg" ]; then
+              echo "${arg%/}"
+              exit 0
+            fi
+          done
+          command -v fzf > /dev/null 2>&1 || { echo "error: command 'fzf' not found" >&2; exit 1; }
+          find . -type f -name '*_test.go' -exec dirname {} \; | sort -u | fzf --no-mouse
+      _ARGS:
+        sh: |
+          for arg in {{ .CLI_ARGS }}; do
+            if [ ! -d "$arg" ]; then
+              printf "%s " "$arg"
+            fi
+          done
+    cmds:
+      - go test -count=1 {{ ._DIR }}/... {{ ._ARGS }}
+
+  test-race:
+    desc: Run tests with race detector enabled.
+    aliases: [testr]
+    env:
+      CGO_ENABLED: 1
+    cmds:
+      - go generate ./...
+      - go test -race -count=1 ./... {{ .CLI_ARGS }}
+
+  test-update:
+    desc: Update golden files. Pass directory as argument (task testu -- ./dir) or omit to choose with fzf.
+    aliases: [testu]
+    vars:
+      _DIR:
+        sh: |
+          for arg in {{ .CLI_ARGS }}; do
+            if [ -d "$arg" ]; then
+              echo "${arg%/}"
+              exit 0
+            fi
+          done
+          command -v fzf > /dev/null 2>&1 || { echo "error: command 'fzf' not found" >&2; exit 1; }
+          find . -type f -name '*_test.go' -exec dirname {} \; | sort -u | fzf --no-mouse
+      _ARGS:
+        sh: |
+          for arg in {{ .CLI_ARGS }}; do
+            if [ ! -d "$arg" ]; then
+              printf "%s " "$arg"
+            fi
+          done
+    cmds:
+      - go test {{ ._DIR }}/... -update {{ ._ARGS }}
+
+  test-coverage:
+    desc: Open a coverage report in a browser. Pass directory as argument (task test-coverage -- ./dir) or omit to choose with fzf.
+    vars:
+      _DIR:
+        sh: |
+          for arg in {{ .CLI_ARGS }}; do
+            if [ -d "$arg" ]; then
+              echo "${arg%/}"
+              exit 0
+            fi
+          done
+          command -v fzf > /dev/null 2>&1 || { echo "error: command 'fzf' not found" >&2; exit 1; }
+          find . -type f -name '*_test.go' -exec dirname {} \; | sort -u | fzf --no-mouse
+      _ARGS:
+        sh: |
+          for arg in {{ .CLI_ARGS }}; do
+            if [ ! -d "$arg" ]; then
+              printf "%s " "$arg"
+            fi
+          done
+    cmds:
+      - echo {{ ._DIR }}
+      - go test -coverprofile cover.out {{ ._DIR }} {{ ._ARGS }}
+      - defer: rm -f cover.out
+      - go tool cover -html cover.out -o cover.html
+      - defer: sleep 2  && rm -f cover.html
+      - '{{ if eq OS "darwin" }}open{{ else }}xdg-open{{ end }} cover.html'
+
+  test-color:
+    desc: Run tests with colors.
+    aliases: [testc]
+    cmds:
+      - go generate ./...
+      - gotestsum -- ./... {{ .CLI_ARGS }}
+    deps:
+      - gotestsum
+
+  debug-func:
+    preconditions:
+      - sh: command -v fzf
+        msg: command 'fzf' not found
+      - sh: command -v dlv
+        msg: command 'dlv' not found
+    desc: Select debug function to run.
+    aliases: [debugf]
+    vars:
+      DIR_AND_FUNC:
+        sh: |
+            find . -name "*_test.go" | while IFS= read -r file; do
+              grep -h "^func Test" "$file" | sed -E 's/^func (Test[^(]+).*/\1/' | awk -v dir="$(dirname "$file")" '{print dir ":" $1}';
+            done | sort | fzf --no-mouse
+      DIR:
+        sh: |
+          IFS=':' read -r directory testFuncName <<< "{{ .DIR_AND_FUNC }}"
+          echo $directory
+      FUNC:
+        sh: |
+          IFS=':' read -r directory testFuncName <<< "{{ .DIR_AND_FUNC }}"
+          echo $testFuncName
+    cmds:
+      - cmd: echo run dlv connect :9090 to connect
+        silent: true
+      - dlv test --headless -l :9090 {{ .DIR }} -- -test.v -test.count=1 -test.run '^{{.FUNC}}$'
+
+  gotestsum:
+    cmds:
+      - go install gotest.tools/gotestsum@latest
+    status:
+      - which gotestsum
+
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Profile ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  profile-mem:
+    desc: Capture and save a heap profile. The first profile is saved as base.heap. All others are saved as '<timestamp>.heap'.
+    preconditions:
+      - sh: command -v curl
+        msg: command 'curl' not found
+      - sh: command -v nc
+        msg: command 'nc' not found
+    cmds:
+      - cmd: mkdir -p {{ .PROFILE_DIR }}
+        silent: true
+      - cmd: |
+          PROFILE_HOST="${PROFILE_HOST:-localhost}"
+          PROFILE_PORT="${PROFILE_PORT:-6666}"
+          FILE_NAME=base.heap
+          if ! nc -z ${PROFILE_HOST} ${PROFILE_PORT}; then
+            echo "Error: No service is listening on ${PROFILE_HOST}:${PROFILE_PORT}"
+            exit 1
+          fi
+          if [ -f "{{ .PROFILE_DIR }}/base.heap" ]; then
+            TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+            FILE_NAME="${TIMESTAMP}.heap"
+          fi
+          curl -s ${PROFILE_HOST}:${PROFILE_PORT}/debug/pprof/heap > "{{ .PROFILE_DIR }}/${FILE_NAME}"
+          FILE_COUNT=$(ls -1 {{ .PROFILE_DIR }}/*.heap | wc -l)
+          echo "run the following command to view profile:"
+          if [ "$FILE_COUNT" -eq 1 ]; then
+            echo "go tool pprof -sample_index=inuse_objects|inuse_space {{ .PROFILE_DIR }}/base.heap"
+          else
+            echo "go tool pprof -sample_index=inuse_objects|inuse_space -base {{ .PROFILE_DIR }}/base.heap {{ .PROFILE_DIR }}/${FILE_NAME}"
+          fi
+        silent: true
+
+  profile-cpu:
+    desc: Capture and save a cpu profile.
+    preconditions:
+      - sh: command -v curl
+        msg: command 'curl' not found
+      - sh: command -v nc
+        msg: command 'nc' not found
+    cmds:
+      - cmd: mkdir -p {{ .PROFILE_DIR }}
+        silent: true
+      - cmd: |
+          PROFILE_HOST="${PROFILE_HOST:-localhost}"
+          PROFILE_PORT="${PROFILE_PORT:-6666}"
+          if ! nc -z ${PROFILE_HOST} ${PROFILE_PORT}; then
+            echo "Error: No service is listening on ${PROFILE_HOST}:${PROFILE_PORT}"
+            exit 1
+          fi
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          FILE_NAME="${TIMESTAMP}.cpu"
+          curl -s ${PROFILE_HOST}:${PROFILE_PORT}/debug/pprof/profile > "{{ .PROFILE_DIR }}/${FILE_NAME}"
+          echo "run the following command to view profile:"
+          echo "go tool pprof {{ .PROFILE_DIR }}/${FILE_NAME}"
+        silent: true
+
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Lint ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  lint:
+    desc: "Lint project with golangci-lint (e.g. task lint -- --build-tags with_envtest)."
+    cmds:
+      - '{{ .GOLANGCI_BIN }} run {{ .CLI_ARGS }}'
+
+  lint-fix:
+    desc: "Try to autofix the golangci-lint errors (e.g. task lint-fix -- --build-tags with_envtest)."
+    cmds:
+      - '{{ .GOLANGCI_BIN }} run --fix {{ .CLI_ARGS }}'
+
+  lint-other-goos:
+    desc: Lint project for other GOOS platforms (excluding current OS).
+    cmds:
+      - for: [darwin, linux, windows]
+        cmd: |
+          if [ "{{.ITEM}}" != "{{OS}}" ]; then
+            echo "GOOS: {{.ITEM}}"
+            GOOS={{.ITEM}} {{ .GOLANGCI_BIN }} run {{ .CLI_ARGS }}
+          fi
+        silent: true
+
+  lint-fix-other-goos:
+    desc: Try to autofix golangci-lint errors for other GOOS platforms (excluding current OS).
+    cmds:
+      - for: [darwin, linux, windows]
+        cmd: |
+          if [ "{{.ITEM}}" != "{{OS}}" ]; then
+            echo "GOOS: {{.ITEM}}"
+            GOOS={{.ITEM}} {{ .GOLANGCI_BIN }} run --fix {{ .CLI_ARGS }}
+          fi
+        silent: true
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Changelog ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  changelog:
+    desc: Creates and pushes a new version tag with git-cliff. Then it creates new {{ .CHANGELOG_FILE }} and pushes it.
+    prompt: 'The next version is: {{ .TAG_VERSION }}. Do you want to continue?'
+    vars:
+      GIT_BRANCH:
+        sh: git branch | awk '/^\* / {print $2}'
+      TAG_VERSION:
+        sh: | # always prefix version with v
+          if [[ {{ .NEXT_VERSION }} =~ ^v ]]; then
+            echo "{{ .NEXT_VERSION }}"
+          else
+            echo "v{{ .NEXT_VERSION }}"
+          fi
+    preconditions:
+      - sh: test {{ .GIT_BRANCH }} = master -o {{ .GIT_BRANCH }} = main
+        msg: "Branch is not master or main. Halting"
+      - sh: git diff --quiet
+        msg: "Git repository is not clean. Please commit or stash changes before running this task."
+    cmds:
+      - git pull
+      - 'git tag -a {{ .TAG_VERSION }} -m "chore: bump version to {{ .TAG_VERSION }}"'
+      - git push --tags
+      - git-cliff -o {{ .CHANGELOG_FILE }} 2>/dev/null
+      - git add {{ .CHANGELOG_FILE }}
+      - 'git commit {{ .CHANGELOG_FILE }} -m "docs: update changelog"'
+      - git push
+
+  changelog-history:
+    desc: Recreates {{ .CHANGELOG_FILE }} from from the first commit to the last tag.
+    vars:
+      GIT_BRANCH:
+        sh: git branch | awk '/^\* / {print $2}'
+      TEMP_DIR:
+        sh: mktemp -d /tmp/changelog-XXXXXX
+    preconditions:
+      - sh: test {{ .GIT_BRANCH }} = master -o {{ .GIT_BRANCH }} = main
+        msg: "Branch is not master or main. Halting"
+      - sh: test -z "$(git diff --cached --name-only)"
+        msg: "Repository has uncommitted changes. Halting"
+    cmds:
+      - git pull
+      - git checkout $(git describe --tags --abbrev=0)
+      - git-cliff -o {{ .TEMP_DIR }}/{{ .CHANGELOG_FILE }} 2>/dev/null
+      - defer: rm -rf {{ .TEMP_DIR }}
+      - defer: cp {{ .TEMP_DIR }}/{{ .CHANGELOG_FILE }} .
+      - defer: git checkout {{ .GIT_BRANCH }}
+
+  changelog-show:
+    desc: Show new {{ .CHANGELOG_FILE }} entries with git-cliff. It does not change anything.
+    vars:
+      GIT_BRANCH:
+        sh: git branch | awk '/^\* / {print $2}'
+    preconditions:
+      - sh: test {{ .GIT_BRANCH }} = master -o {{ .GIT_BRANCH }} = main
+        msg: "Branch is not master or main. Halting"
+    cmds:
+      - git pull
+      - git-cliff -u --tag-pattern='^v[0-9].*' 2>/dev/null
+      - cmd: 'echo; echo "Next Version: {{ .NEXT_VERSION }}"'
+        silent: true
+
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Install ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  install:
+    desc: Installs created binaries to {{ .INSTALL_DIR }}.
+    preconditions:
+      - sh: test -n "{{.BINARIES}}"
+        msg: "No binaries found for {{ OS }}. Add a build for {{ OS }} in GoReleaser file."
+    deps:
+      - default
+    cmds:
+      - mkdir -p {{ .INSTALL_DIR }} && cp -a -t {{ .INSTALL_DIR }} {{ .BINARIES }}
+
+  install-tools:
+    desc: "Installs necessary build and lint tools with the correct version to {{ .LOCAL_BIN }} - WARNING: on MAC it needs findutils and coreutils"
+    deps:
+      - task: install-goreleaser
+        vars:
+          INSTALL_DIR: '{{ .LOCAL_BIN }}'
+      - task: install-golangci-lint
+        vars:
+          INSTALL_DIR: '{{ .LOCAL_BIN }}'
+
+  install-goreleaser:
+    preconditions:
+      - sh: command -v curl
+        msg: command 'curl' not found
+    vars:
+      DOWNLOAD_DIR: download-{{ .TASK }}
+    cmds:
+      - mkdir -p {{ .DOWNLOAD_DIR }}
+      - defer: rm -rf {{ .DOWNLOAD_DIR }}
+      - cd {{ .DOWNLOAD_DIR }} && curl -s -L -o goreleaser.tar.gz "https://github.com/goreleaser/goreleaser/releases/download/v{{ .GORELEASER }}/goreleaser_{{ OS | title }}_{{ ARCH }}.tar.gz"
+      - cd {{ .DOWNLOAD_DIR }} && tar -xvf goreleaser.tar.gz
+      - mkdir -p {{ .INSTALL_DIR }} && install {{ .DOWNLOAD_DIR }}/goreleaser {{ .INSTALL_DIR }}
+
+  install-golangci-lint:
+    preconditions:
+      - sh: command -v curl
+        msg: command 'curl' not found
+    vars:
+      DOWNLOAD_DIR: download-{{ .TASK }}
+    cmds:
+      - mkdir -p {{ .DOWNLOAD_DIR }}
+      - defer: rm -rf {{ .DOWNLOAD_DIR }}
+      - cd {{ .DOWNLOAD_DIR }} && curl -s -L -o golangci-lint.tar.gz "https://github.com/golangci/golangci-lint/releases/download/v{{ .GOLANGCI }}/golangci-lint-{{ .GOLANGCI }}-{{ OS }}-{{ ARCH }}.tar.gz"
+      - cd {{ .DOWNLOAD_DIR }} && tar -xvf golangci-lint.tar.gz
+      - mkdir -p {{ .INSTALL_DIR }} && install {{ .DOWNLOAD_DIR }}/golangci-lint-{{ .GOLANGCI }}-{{ OS }}-{{ ARCH }}/golangci-lint {{ .INSTALL_DIR }}
+
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Clean ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  gen:
+    desc: Run go generate.
+    cmds:
+      - go generate ./...
+
+  clean:
+    cmds:
+      - rm -rf ./dist
+      - rm -rf ./downloads
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Gitlab ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  #
+  gitlab-enable-job-token:
+    desc: Enable job token push permissions for the repository.
+    preconditions:
+      - sh: command -v glab
+        msg: command 'glab' not found
+      - sh: command -v jq
+        msg: command 'jq' not found
+    cmds:
+      - cmd: |
+          # Check if setting is already enabled
+          CURRENT_SETTING=$(glab api projects/:fullpath | jq -r '.ci_push_repository_for_job_token_allowed // false')
+          if [ "$CURRENT_SETTING" = "true" ]; then
+            echo "Job token push permissions already enabled"
+            exit 0
+          fi
+          RESULT=$(glab api projects/:fullpath -X PUT --field ci_push_repository_for_job_token_allowed=true | jq -r '.ci_push_repository_for_job_token_allowed')
+          if [ "$RESULT" = "true" ]; then
+            echo "Job token push permissions enabled successfully"
+          else
+            echo "Failed to enable job token push permissions"
+            exit 1
+          fi
+
+  gitlab-disable-job-token:
+    desc: Disable job token push permissions for the repository.
+    preconditions:
+      - sh: command -v glab
+        msg: command 'glab' not found
+      - sh: command -v jq
+        msg: command 'jq' not found
+    cmds:
+      - cmd: |
+          # Check if setting is already disabled
+          CURRENT_SETTING=$(glab api projects/:fullpath | jq -r '.ci_push_repository_for_job_token_allowed // false')
+          if [ "$CURRENT_SETTING" = "false" ]; then
+            echo "Job token push permissions already disabled"
+            exit 0
+          fi
+          RESULT=$(glab api projects/:fullpath -X PUT --field ci_push_repository_for_job_token_allowed=false | jq -r '.ci_push_repository_for_job_token_allowed')
+          if [ "$RESULT" = "false" ]; then
+            echo "Job token push permissions disabled successfully"
+          else
+            echo "Failed to disable job token push permissions"
+            exit 1
+          fi

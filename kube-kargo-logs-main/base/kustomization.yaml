@@ -1,0 +1,5 @@
+namespace: kube-kargo-logs
+resources:
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml

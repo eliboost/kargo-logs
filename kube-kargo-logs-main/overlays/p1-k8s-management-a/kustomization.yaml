@@ -1,0 +1,15 @@
+namespace: kube-kargo-logs
+resources:
+  - ../../base
+  - rbac.yaml
+  - serviceaccount.yaml
+  - gateway.yaml
+patches:
+  - path: version.yaml
+  - path: deployment.yaml
+helmCharts:
+  - name: pf-namespace
+    version: v1.9.0
+    namespace: kube-kargo-logs
+    valuesFile: namespace.yaml
+    repo: https://repo.pnet.ch/artifactory/linux-cluster-helm-local/

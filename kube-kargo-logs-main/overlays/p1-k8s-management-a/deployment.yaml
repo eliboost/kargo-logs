@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kargo-analysisrun-logs
+spec:
+  template:
+    spec:
+      containers:
+        - name: kargo-analysisrun-logs
+          volumeMounts:
+            - mountPath: /home/kargo/compauth
+              name: compauth  
+              readOnly: true
+          env:
+            - name: K8S_COMPAUTH_AUTHENTICATOR_KEY_FILE
+              value: /home/kargo/compauth/a-pf-appl-kargo-logs_key.pem
+            - name: K8S_COMPAUTH_AUTHENTICATOR_CERT_FILE
+              value: /home/kargo/compauth/a-pf-appl-kargo-logs_certificate.pem
+            - name: K8S_COMPAUTH_AUTHENTICATOR_PASSWORD_FILE
+              value: /home/kargo/compauth/password.raw
+      volumes:
+        - name: compauth
+          secret:
+            secretName: ces-data-p1-compauth-kargo-logs-store
+            optional: true

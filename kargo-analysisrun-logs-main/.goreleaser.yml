@@ -1,0 +1,56 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+version: 2
+project_name: kargo-analysisrun-logs
+release:
+  disable: "true"
+snapshot:
+  version_template: '{{ .Version }}-{{ .Env.PROJECT_RELEASE }}'
+dockers_v2:
+  - dockerfile: packaging/docker/Dockerfile
+    images:
+      - '{{ .Env.DOCKER_IMAGE_PREFIX }}{{ .Env.DOCKER_PATH_PREFIX }}{{ .ProjectName }}'
+    tags:
+      - latest
+      - '{{ .Major }}'
+      - '{{ .Major }}.{{ .Minor }}'
+      - '{{ .Major }}.{{ .Minor }}.{{ .Patch }}'
+      - '{{ .Major }}.{{ .Minor }}.{{ .Patch }}-{{ .Env.CAL_VERSION }}'
+    labels:
+      ch.postfinance.go.version: '{{ .Env.GO_VERSION }}'
+      org.opencontainers.image.created: '{{ .Date }}'
+      org.opencontainers.image.revision: '{{ .ShortCommit }}'
+      org.opencontainers.image.source: '{{ .Env.CI_PROJECT_URL }}'
+      org.opencontainers.image.url: '{{ .Env.CI_PROJECT_URL }}'
+      org.opencontainers.image.vendor: PostFinance AG
+      org.opencontainers.image.version: '{{ .Version }}'
+    extra_files:
+      - packaging/docker/entrypoint.sh
+    platforms:
+      - linux/amd64
+    build_args:
+      http_proxy: '{{ .Env.http_proxy }}'
+      https_proxy: '{{ .Env.https_proxy }}'
+      no_proxy: '{{ .Env.no_proxy }}'
+    flags:
+      - --pull
+    sbom: "false"
+publishers:
+  - name: artifactory
+    cmd: release-helper publish --project-name {{ .ProjectName }} --project-url {{ .Env.CI_PROJECT_URL }} --artifact-path {{ .ArtifactPath }} --arch='{{ .Arch }}'
+    env:
+      - CREATE_GO_APP_VERSION=0.49.2
+      - GO_VERSION={{ .Env.GO_VERSION }}
+      - CI_PROJECT_URL={{ .Env.CI_PROJECT_URL }}
+      - GIT_SHORT_COMMIT={{ .ShortCommit }}
+      - ARTIFACTORY_DEB_URL={{ .Env.ARTIFACTORY_DEB_URL }}
+      - ARTIFACTORY_RPM_RHEL10_URL={{ .Env.ARTIFACTORY_RPM_RHEL10_URL }}
+      - ARTIFACTORY_RPM_RHEL8_URL={{ .Env.ARTIFACTORY_RPM_RHEL8_URL }}
+      - ARTIFACTORY_RPM_RHEL9_URL={{ .Env.ARTIFACTORY_RPM_RHEL9_URL }}
+      - ARTIFACTORY_ZIP_URL={{ .Env.ARTIFACTORY_ZIP_URL }}
+      - DOCKER_PASSWORD={{ .Env.DOCKER_PASSWORD }}
+      - DOCKER_USERNAME={{ .Env.DOCKER_USERNAME }}
+      - SUPPORTED_DEBIAN_RELEASES={{ .Env.SUPPORTED_DEBIAN_RELEASES }}
+before:
+  hooks:
+    - go generate ./...

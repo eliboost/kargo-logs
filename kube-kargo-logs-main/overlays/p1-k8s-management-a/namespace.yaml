@@ -1,0 +1,25 @@
+global:
+  cluster_id: p1-k8s-management-a
+applicationOwnerMail: smmwpf@postfinance.ch
+operationOwnerMail: smmwpf@postfinance.ch
+sysAppl: ASMMW
+vaultSync:
+  enabled: true
+  secretPathPrefix: secret/team_asmmw/k8s/p1-k8s-management/kube-kargo-logs
+  secretPrefix: ""
+  tolerateControlPlane: true
+  secretStore:
+    enabled: true
+    name: default
+  disableJob: true
+networkPolicy:
+  enabled: false
+burger:
+  monitoring:
+    receivers:
+      email:
+        to:
+        - smmwpf@postfinance.ch
+      messageForwarder:
+        to: p1
+        disable: false

@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kargo-analysisrun-logs
+spec:
+  template:
+    spec:
+      containers:
+        - name: kargo-analysisrun-logs
+          image: middleware-docker-staging-local.repo.pnet.ch/pf/middleware/kargo-analysisrun-logs:0.0.1-20260729113617

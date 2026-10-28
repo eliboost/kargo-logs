@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kargo-analysisrun-logs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kargo-analysisrun-logs
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kargo-analysisrun-logs
+    spec:
+      serviceAccountName: kargo-analysisrun-logs
+      securityContext:
+        fsGroup: 65534
+      containers:
+        - name: kargo-analysisrun-logs
+          image: kargo-analysisrun-logs-collector
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: KARGO_NAMESPACE
+              value: kube-kargo-logs
+            - name: LOG_LEVEL
+              value: debug
+          volumeMounts:
+            - name: logs
+              mountPath: /tmp/logs
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: logs
+          persistentVolumeClaim:
+            claimName: kargo-analysisrun-logs
+

@@ -1,0 +1,25 @@
+global:
+  cluster_id: e1-k8s-pfnet-lab-d
+applicationOwnerMail: smmwpf@postfinance.ch
+operationOwnerMail: smmwpf@postfinance.ch
+sysAppl: ASMMW
+vaultSync:
+  enabled: true
+  secretPathPrefix: secret/team_asmmw/kargo/e1-k8s-pfnet-lab-d
+  secretPrefix: ""
+  tolerateControlPlane: true
+  secretStore:
+    enabled: true
+    name: default
+  disableJob: true
+networkPolicy:
+  enabled: false
+burger:
+  monitoring:
+    receivers:
+      email:
+        to:
+        - smmwpf@postfinance.ch
+      messageForwarder:
+        to: p1
+        disable: false
