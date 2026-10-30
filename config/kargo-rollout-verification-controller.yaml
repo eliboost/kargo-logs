@@ -8,6 +8,13 @@
 {{- $policyActions := $verification.policyActions | default (list "Warn" "Audit") }}
 {{- $launcherPrefix := printf "system:serviceaccount:%s:verification-launcher-" $jobNamespace }}
 {{- $controllerUser := printf "system:serviceaccount:%s:kargo-rollouts-verification-controller" .Release.Namespace }}
+{{- /* Automatisches Onboarding ueber Kyverno (kargoRolloutsVerification.onboarding.kyverno.enabled). */ -}}
+{{- $kyverno := (($verification.onboarding | default dict).kyverno | default dict) }}
+{{- /* Alternative ohne Kyverno: CronJob als Onboarder (onboarding.onboarder.enabled). Nur eins von beiden. */ -}}
+{{- $onboarder := (($verification.onboarding | default dict).onboarder | default dict) }}
+{{- if and ($kyverno.enabled | default false) ($onboarder.enabled | default false) }}
+{{- fail "kargoRolloutsVerification.onboarding: enable either kyverno or onboarder, not both" }}
+{{- end }}
 
 # ===========================================================================
 # Modell
@@ -311,6 +318,439 @@ metadata:
 spec:
   policyName: kargo-launcher-job-hardening
   validationActions: {{ $policyActions | toJson }}
+{{- if ($kyverno.enabled | default false) }}
+
+---
+# ---------------------------------------------------------------------------
+# Onboarding aus der Annotation. Traegt ein Namespace
+#   kargo.akuity.io/authorized-stage: <Projekt>:<Stage>
+# entstehen automatisch
+#   - das Konto verification-launcher-<Projekt> im Job-Namespace
+#   - die RoleBinding dazu im Namespace selbst
+# Ausloeser ist die Zustimmung des Ziels, nicht eine Liste des Absenders.
+# Verliert der Namespace die Annotation oder wird er geloescht, raeumt
+# synchronize beides wieder ab. Loescht man die Policy, verschwindet alles Erzeugte.
+# Nicht zusammen mit einem Eintrag in "launchers" fuer dasselbe Projekt verwenden:
+# beide wuerden dieselben Objekte beanspruchen.
+# ---------------------------------------------------------------------------
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: kargo-launcher-onboarding
+spec:
+  rules:
+    - name: launcher-serviceaccount
+      match:
+        any:
+          - resources:
+              kinds: ["Namespace"]
+              annotations:
+                kargo.akuity.io/authorized-stage: "?*:?*"
+      context:
+        - name: project
+          variable:
+            jmesPath: split(request.object.metadata.annotations."kargo.akuity.io/authorized-stage", ':')[0]
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: v1
+        kind: ServiceAccount
+        name: "verification-launcher-{{ `{{ project }}` }}"
+        namespace: {{ $jobNamespace }}
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: kyverno
+              app.kubernetes.io/part-of: kargo-verification
+
+    - name: launcher-rolebinding
+      match:
+        any:
+          - resources:
+              kinds: ["Namespace"]
+              annotations:
+                kargo.akuity.io/authorized-stage: "?*:?*"
+      context:
+        - name: project
+          variable:
+            jmesPath: split(request.object.metadata.annotations."kargo.akuity.io/authorized-stage", ':')[0]
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        name: "verification-launcher-{{ `{{ project }}` }}"
+        namespace: "{{ `{{ request.object.metadata.name }}` }}"
+        data:
+          metadata:
+            labels:
+              app.kubernetes.io/managed-by: kyverno
+              app.kubernetes.io/part-of: kargo-verification
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: kargo-verification-launcher
+          subjects:
+            - kind: ServiceAccount
+              name: "verification-launcher-{{ `{{ project }}` }}"
+              namespace: {{ $jobNamespace }}
+
+---
+# Kyverno braucht die Rechte, diese Objekte anzulegen. Die Rolle wird in die
+# Rolle des Background-Controllers aggregiert (Label siehe Kyverno-Chart).
+# "bind" ist auf genau diese eine ClusterRole beschraenkt, damit Kyverno keine
+# anderen Rechte vergeben kann.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background-controller:kargo-launcher-onboarding
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["kargo-verification-launcher"]
+    verbs: ["bind"]
+{{- end }}
+
+{{- if ($onboarder.enabled | default false) }}
+
+---
+# ---------------------------------------------------------------------------
+# Onboarder (Variante ohne Kyverno). Ein CronJob liest alle Namespaces mit der
+# Annotation kargo.akuity.io/authorized-stage: <Projekt>:<Stage> und legt an:
+#   - das Konto verification-launcher-<Projekt> im Job-Namespace
+#   - die RoleBinding dazu im Namespace selbst
+# Ausloeser ist die Zustimmung des Ziels, nicht eine Liste des Absenders.
+# Verschwindet die Annotation, raeumt der naechste Lauf beides wieder ab. Der
+# Onboarder fasst nur Objekte mit dem Label
+# app.kubernetes.io/managed-by=kargo-launcher-onboarder an.
+# Nicht zusammen mit einem Eintrag in "launchers" fuer dasselbe Projekt verwenden.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kargo-launcher-onboarder
+  namespace: {{ .Release.Namespace }}
+
+---
+# Das sensible Recht dieser Variante: RoleBindings in beliebigen Namespaces.
+# "bind" ist auf die eine Launcher-ClusterRole beschraenkt, die Guard-Policy
+# unten beschraenkt Namen, Label, roleRef und Subjects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kargo-launcher-onboarder
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["kargo-verification-launcher"]
+    verbs: ["bind"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kargo-launcher-onboarder
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kargo-launcher-onboarder
+subjects:
+  - kind: ServiceAccount
+    name: kargo-launcher-onboarder
+    namespace: {{ .Release.Namespace }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-launcher-onboarder
+  namespace: {{ $jobNamespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-launcher-onboarder
+  namespace: {{ $jobNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-launcher-onboarder
+subjects:
+  - kind: ServiceAccount
+    name: kargo-launcher-onboarder
+    namespace: {{ .Release.Namespace }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kargo-launcher-onboarder-script
+  namespace: {{ .Release.Namespace }}
+data:
+  onboard.sh: |
+    #!/bin/sh
+    # Onboarder fuer die Launcher-Konten.
+    # Aus der Annotation kargo.akuity.io/authorized-stage: <Projekt>:<Stage> an einem Namespace entstehen
+    #   - das Konto verification-launcher-<Projekt> im Job-Namespace
+    #   - die RoleBinding verification-launcher-<Projekt> im Namespace selbst
+    # Beides traegt das Label app.kubernetes.io/managed-by=kargo-launcher-onboarder.
+    # Verschwindet die Annotation oder der Namespace, werden die Objekte wieder entfernt.
+    # Angefasst werden nur Objekte mit diesem Label.
+    set -eu
+    export LC_ALL=C
+
+    : "${JOB_NAMESPACE:?JOB_NAMESPACE must be set}"
+    : "${LAUNCHER_ROLE:?LAUNCHER_ROLE must be set}"
+    MAX_DELETE="${MAX_DELETE:-10}"
+    MANAGED_LABEL="app.kubernetes.io/managed-by"
+    MANAGED_VALUE="kargo-launcher-onboarder"
+    SELECTOR="${MANAGED_LABEL}=${MANAGED_VALUE}"
+
+    WORK="$(mktemp -d)"
+    trap 'rm -rf "$WORK"' EXIT
+
+    # 1. Namespaces mit Annotation lesen. Schlaegt das fehl, bricht set -e ab, bevor etwas geaendert wird.
+    kubectl get ns -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.annotations.kargo\.akuity\.io/authorized-stage}{"\n"}{end}' > "$WORK/ns.tsv"
+    if [ ! -s "$WORK/ns.tsv" ]; then
+      echo "ERROR: namespace list is empty, aborting without changes" >&2
+      exit 1
+    fi
+
+    # 2. Gewuenschter Zustand: "<namespace> <projekt>". Nur gueltige Namen, genau ein Doppelpunkt, Stage nicht leer.
+    awk -F'\t' '
+      function ok(s) { return length(s) > 0 && length(s) <= 63 && s ~ /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/ }
+      NF >= 2 && $2 != "" {
+        n = split($2, a, ":")
+        if (n == 2 && ok($1) && ok(a[1]) && a[2] != "") print $1 " " a[1]
+        else print "WARN: ignoring namespace " $1 ": invalid annotation value" > "/dev/stderr"
+      }' "$WORK/ns.tsv" | sort -u > "$WORK/desired.txt"
+
+    # 3. Manifeste erzeugen und anwenden.
+    if [ -s "$WORK/desired.txt" ]; then
+      awk -v jobns="$JOB_NAMESPACE" -v role="$LAUNCHER_ROLE" -v lbl="$MANAGED_LABEL" -v val="$MANAGED_VALUE" '
+        !seen[$2]++ { sa[++n] = $2 }
+        { ns[NR] = $1; pr[NR] = $2 }
+        END {
+          for (i = 1; i <= n; i++) {
+            print "---"
+            print "apiVersion: v1"
+            print "kind: ServiceAccount"
+            print "metadata:"
+            print "  name: verification-launcher-" sa[i]
+            print "  namespace: " jobns
+            print "  labels:"
+            print "    " lbl ": " val
+          }
+          for (i = 1; i <= NR; i++) {
+            print "---"
+            print "apiVersion: rbac.authorization.k8s.io/v1"
+            print "kind: RoleBinding"
+            print "metadata:"
+            print "  name: verification-launcher-" pr[i]
+            print "  namespace: " ns[i]
+            print "  labels:"
+            print "    " lbl ": " val
+            print "roleRef:"
+            print "  apiGroup: rbac.authorization.k8s.io"
+            print "  kind: ClusterRole"
+            print "  name: " role
+            print "subjects:"
+            print "  - kind: ServiceAccount"
+            print "    name: verification-launcher-" pr[i]
+            print "    namespace: " jobns
+          }
+        }' "$WORK/desired.txt" > "$WORK/manifests.yaml"
+      kubectl apply -f "$WORK/manifests.yaml"
+    fi
+
+    # 3b. Gewuenschte Namen fuer das Aufraeumen.
+    awk '{ print "verification-launcher-" $2 }' "$WORK/desired.txt" | sort -u > "$WORK/sa.desired"
+    awk '{ print $1 " verification-launcher-" $2 }' "$WORK/desired.txt" | sort -u > "$WORK/rb.desired"
+
+    # 4. Aufraeumen: vorhandene, vom Onboarder verwaltete Objekte, die nicht mehr gewuenscht sind.
+    # Ein leerer Lesefehler fuehrt hier nur zu weniger Loeschungen, nie zu mehr.
+    kubectl -n "$JOB_NAMESPACE" get serviceaccount -l "$SELECTOR" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort > "$WORK/sa.existing" || true
+    kubectl get rolebinding -A -l "$SELECTOR" -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' | sort > "$WORK/rb.existing" || true
+    comm -23 "$WORK/sa.existing" "$WORK/sa.desired" > "$WORK/sa.delete"
+    comm -23 "$WORK/rb.existing" "$WORK/rb.desired" > "$WORK/rb.delete"
+
+    DEL=$(( $(grep -c . "$WORK/sa.delete" || true) + $(grep -c . "$WORK/rb.delete" || true) ))
+    if [ "$DEL" -gt "$MAX_DELETE" ]; then
+      echo "ERROR: $DEL objects would be deleted (limit $MAX_DELETE), aborting without deleting" >&2
+      exit 1
+    fi
+
+    while read -r ns name; do
+      [ -n "$name" ] && kubectl -n "$ns" delete rolebinding "$name" --ignore-not-found
+    done < "$WORK/rb.delete"
+    while read -r name; do
+      [ -n "$name" ] && kubectl -n "$JOB_NAMESPACE" delete serviceaccount "$name" --ignore-not-found
+    done < "$WORK/sa.delete"
+
+    echo "onboarder done: $(grep -c . "$WORK/desired.txt" || true) namespaces desired, $DEL objects removed"
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kargo-launcher-onboarder
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ $onboarder.schedule | default "*/2 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          annotations:
+            collectord.io/output: splunk
+            collectord.io/logs-index: kargoitd
+        spec:
+          serviceAccountName: kargo-launcher-onboarder
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: onboarder
+              image: {{ required "kargoRolloutsVerification.onboarding.onboarder.image must be set (needs kubectl, sh, awk, sort, comm, grep, mktemp)" $onboarder.image | quote }}
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "/scripts/onboard.sh"]
+              env:
+                - name: JOB_NAMESPACE
+                  value: {{ $jobNamespace | quote }}
+                - name: LAUNCHER_ROLE
+                  value: kargo-verification-launcher
+                - name: MAX_DELETE
+                  value: {{ $onboarder.maxDelete | default 10 | quote }}
+                - name: HOME
+                  value: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: script
+              configMap:
+                name: kargo-launcher-onboarder-script
+                defaultMode: 0555
+            - name: tmp
+              emptyDir: {}
+
+---
+# Guard: Der Onboarder darf nur genau diese Objekte schreiben und loeschen.
+# Ohne diese Policy koennte er jede RoleBinding im Cluster aendern oder loeschen und
+# jedes Konto im Job-Namespace, auch das des Controllers. failurePolicy Fail ist hier
+# unkritisch, weil die matchCondition nur diesen einen Benutzer trifft.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: kargo-launcher-onboarder-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["rolebindings"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["serviceaccounts"]
+  matchConditions:
+    - name: onboarder-only
+      expression: >-
+        request.userInfo.username ==
+        'system:serviceaccount:{{ .Release.Namespace }}:kargo-launcher-onboarder'
+  variables:
+    - name: obj
+      expression: >-
+        request.operation == 'DELETE' ? oldObject : object
+  validations:
+    - expression: >-
+        variables.obj.metadata.name.startsWith('verification-launcher-')
+      message: "The onboarder may only manage objects named verification-launcher-<project>."
+    - expression: >-
+        has(variables.obj.metadata.labels) &&
+        'app.kubernetes.io/managed-by' in variables.obj.metadata.labels &&
+        variables.obj.metadata.labels['app.kubernetes.io/managed-by'] == 'kargo-launcher-onboarder'
+      message: "The onboarder may only manage objects labelled app.kubernetes.io/managed-by=kargo-launcher-onboarder."
+    - expression: >-
+        request.operation != 'UPDATE' ||
+        (has(oldObject.metadata.labels) &&
+        'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
+        oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'kargo-launcher-onboarder')
+      message: "The onboarder must not take over objects it did not create."
+    - expression: >-
+        request.resource.resource != 'serviceaccounts' ||
+        request.namespace == '{{ $jobNamespace }}'
+      message: "The onboarder may only manage ServiceAccounts in the job namespace."
+    - expression: >-
+        request.resource.resource != 'rolebindings' ||
+        (variables.obj.roleRef.kind == 'ClusterRole' &&
+        variables.obj.roleRef.name == 'kargo-verification-launcher')
+      message: "The onboarder may only bind the kargo-verification-launcher ClusterRole."
+    - expression: >-
+        request.resource.resource != 'rolebindings' ||
+        (has(variables.obj.subjects) &&
+        variables.obj.subjects.all(s,
+        s.kind == 'ServiceAccount' &&
+        s.namespace == '{{ $jobNamespace }}' &&
+        s.name == variables.obj.metadata.name))
+      message: "The onboarder may only bind the matching launcher ServiceAccount of the job namespace."
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: kargo-launcher-onboarder-guard
+spec:
+  policyName: kargo-launcher-onboarder-guard
+  validationActions: {{ $policyActions | toJson }}
+{{- end }}
 
 ---
 apiVersion: apps/v1
