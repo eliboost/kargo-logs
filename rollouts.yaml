@@ -1,109 +1,76 @@
 {{- $verification := .Values.kargoRolloutsVerification | default dict }}
 {{- if ($verification.enabled | default false) }}
-
-{{- $instanceID := required
-  "kargoRolloutsVerification.instanceID must be set when verification is enabled"
-  $verification.instanceID
-}}
-
+{{- $jobNamespace := required "kargoRolloutsVerification.jobCluster.namespace must be set" $verification.jobCluster.namespace }}
 ---
+# Controller: braucht Jobs nur im Job-Namespace. Eigenes Konto, NICHT das des Launchers.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: verification-launcher
+  name: kargo-rollouts-verification-controller
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: kargo-rollouts-verification-controller
     app.kubernetes.io/instance: {{ .Release.Name }}
-
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  # Neuer Name: Das roleRef einer bestehenden RoleBinding laesst sich nicht aendern.
+  name: {{ .Release.Name }}-verification-controller-jobs
+  namespace: {{ $jobNamespace }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-verification-controller-jobs
+  namespace: {{ $jobNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-verification-controller-jobs
+subjects:
+  - kind: ServiceAccount
+    name: kargo-rollouts-verification-controller
+    namespace: {{ .Release.Namespace }}
+---
+# Launcher: Konto im Job-Namespace und die Rechte als ClusterRole.
+# Hier KEINE Bindung. Die RoleBinding kommt pro App-Namespace (Onboarding).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verification-launcher
+  namespace: {{ $jobNamespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kargo-verification-launcher
-  labels:
-    app.kubernetes.io/name: kargo-rollouts-verification-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
 rules:
-  - apiGroups:
-      - batch
-    resources:
-      - cronjobs
-    resourceNames:
-      - verification-smoke
-    verbs:
-      - get
-  - apiGroups:
-      - batch
-    resources:
-      - jobs
-    verbs:
-      - create
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - pods/log
-    verbs:
-      - get
-
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    resourceNames: ["verification-smoke"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ .Release.Name }}-rollouts-verification-job-runner
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: kargo-rollouts-verification-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kargo-verification-launcher
-subjects:
-  - kind: ServiceAccount
-    name: verification-launcher
-    namespace: {{ .Release.Namespace }}
-
-{{- if .Values.kargoRolloutsVerification.jobCluster.createClusterRoleBinding }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ .Release.Name }}-rollouts-verification-job-runner
-  labels:
-    app.kubernetes.io/name: kargo-rollouts-verification-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kargo-verification-launcher
-subjects:
-  - kind: ServiceAccount
-    name: verification-launcher
-    namespace: {{ .Release.Namespace }}
-{{- end }}
-
----
+# Fehlte im Template: die Policy zur vorhandenen Binding kargo-verification-launcher-scope.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
-  name: kargo-verification-launcher-jobs
+  name: kargo-verification-launcher-scope
 spec:
   failurePolicy: Ignore
-  paramKind:
-    apiVersion: batch/v1
-    kind: CronJob
   matchConstraints:
     resourceRules:
       - apiGroups: ["batch"]
@@ -111,425 +78,20 @@ spec:
         operations: ["CREATE"]
         resources: ["jobs"]
   matchConditions:
-    - name: only-launcher
+    - name: per-app-launcher
       expression: >-
         request.userInfo.username.startsWith(
-        'system:serviceaccount:{{ .Release.Namespace }}:verification-launcher')
+        'system:serviceaccount:{{ $jobNamespace }}:verification-launcher-')
+  variables:
+    - name: app
+      expression: >-
+        request.userInfo.username.substring(size(
+        'system:serviceaccount:{{ $jobNamespace }}:verification-launcher-'))
   validations:
     - expression: >-
-        has(object.metadata.ownerReferences) &&
-        object.metadata.ownerReferences.exists(o,
-        o.kind == 'CronJob' && o.name == params.metadata.name &&
-        o.uid == params.metadata.uid)
-      message: "The launcher may only create Jobs from the verification-smoke CronJob."
-    - expression: >-
-        dyn(object.spec.template.spec) ==
-        dyn(params.spec.jobTemplate.spec.template.spec)
-      message: "The Job's pod specification differs from the verification-smoke CronJob."
-
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: kargo-verification-launcher-jobs
-spec:
-  policyName: kargo-verification-launcher-jobs
-  validationActions: ["Warn", "Audit"]
-  paramRef:
-    name: verification-smoke
-    parameterNotFoundAction: Allow
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: kargo-verification-launcher-scope
-spec:
-  policyName: kargo-verification-launcher-scope
-  validationActions: ["Warn", "Audit"]
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: kargo-rollouts-verification-controller
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: kargo-rollouts-verification-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
-spec:
-  replicas: 1
-  revisionHistoryLimit: 3
-
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: kargo-rollouts-verification-controller
-      app.kubernetes.io/instance: {{ .Release.Name }}
-
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: kargo-rollouts-verification-controller
-        app.kubernetes.io/instance: {{ .Release.Name }}
-      annotations:
-        collectord.io/output: splunk
-        collectord.io/logs-index: kargoitd
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8090"
-        prometheus.io/path: "/metrics"
-
-    spec:
-      serviceAccountName: verification-launcher
-      automountServiceAccountToken: true
-
-      securityContext:
-        runAsNonRoot: true
-        fsGroup: 999
-        fsGroupChangePolicy: OnRootMismatch
-
-      initContainers:
-        - name: add-pf-pki-all
-          image: linux-docker-local.repo.pnet.ch/pf/alpine:3.24.2202610140623
-          imagePullPolicy: Always
-          securityContext:
-            runAsUser: 0
-            runAsNonRoot: false
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-          command:
-            - /bin/sh
-            - -c
-          args:
-            - |
-              set -eu
-
-              cp -rL /etc/ssl/certs/* /tmp/target/
-              cp /pf-pki/* /tmp/target/
-
-              echo "PF PKI certificates copied successfully"
-          volumeMounts:
-            - name: certs
-              mountPath: /tmp/target
-
-            - name: pf-pki
-              mountPath: /pf-pki
-              readOnly: true
-
-        - name: prepare-compauth
-          image: "{{ .Values.kargoRolloutsVerification.compauth.image.registry }}/{{ .Values.kargoRolloutsVerification.compauth.image.repository }}:{{ .Values.kargoRolloutsVerification.compauth.image.tag }}"
-          imagePullPolicy: IfNotPresent
-
-          command:
-            - /bin/sh
-            - -c
-
-          args:
-            - |
-              set -eu
-
-              if [ ! -x /opt/compauth-auth ]; then
-                echo "ERROR: /opt/compauth-auth is missing or not executable"
-                exit 1
-              fi
-
-              cp /opt/compauth-auth /compauth-bin/compauth-auth
-              chmod 0555 /compauth-bin/compauth-auth
-
-              echo "Compauth binary copied successfully"
-              ls -l /compauth-bin/compauth-auth
-
-          securityContext:
-            runAsUser: 999
-            runAsGroup: 999
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-                - ALL
-
-          volumeMounts:
-            - name: compauth-bin
-              mountPath: /compauth-bin
-
-        - name: prepare-kubeconfigs
-          image: linux-docker-local.repo.pnet.ch/pf/alpine:3.24.2202610140623
-          imagePullPolicy: Always
-          securityContext:
-            runAsUser: 0
-            runAsNonRoot: false
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-          command:
-            - /bin/sh
-            - -c
-          args:
-            - |
-              set -eu
-
-              apk add --no-cache jq
-
-              EXEC_CMD="$(
-                echo "${CLUSTER_CONFIG}" |
-                jq -r '.execProviderConfig.command // empty'
-              )"
-
-              EXEC_API="$(
-                echo "${CLUSTER_CONFIG}" |
-                jq -r '.execProviderConfig.apiVersion // empty'
-              )"
-
-              if [ -z "${CLUSTER_SERVER}" ]; then
-                echo "ERROR: CLUSTER_SERVER is empty"
-                exit 1
-              fi
-
-              if [ -z "${CLUSTER_NAME}" ]; then
-                echo "ERROR: CLUSTER_NAME is empty"
-                exit 1
-              fi
-
-              if [ -z "${EXEC_CMD}" ]; then
-                echo "ERROR: execProviderConfig.command is empty"
-                exit 1
-              fi
-
-              if [ -z "${EXEC_API}" ]; then
-                echo "ERROR: execProviderConfig.apiVersion is empty"
-                exit 1
-              fi
-
-              echo "Creating control-plane kubeconfig for ${CLUSTER_NAME}"
-              echo "Exec authenticator command: ${EXEC_CMD}"
-
-              cat > /etc/argo-rollouts/control-plane/kubeconfig.yaml <<EOF
-              apiVersion: v1
-              kind: Config
-              clusters:
-                - name: ${CLUSTER_NAME}
-                  cluster:
-                    server: ${CLUSTER_SERVER}
-                    insecure-skip-tls-verify: true
-              contexts:
-                - name: ${CLUSTER_NAME}
-                  context:
-                    cluster: ${CLUSTER_NAME}
-                    user: ${CLUSTER_NAME}
-              current-context: ${CLUSTER_NAME}
-              users:
-                - name: ${CLUSTER_NAME}
-                  user:
-                    exec:
-                      apiVersion: ${EXEC_API}
-                      command: ${EXEC_CMD}
-                      interactiveMode: Never
-                      env:
-                        - name: K8S_COMPAUTH_AUTHENTICATOR_KEY_FILE
-                          value: /etc/argo-rollouts/compauth/a-pf-appl-kargo-cp-lab_key.pem
-                        - name: K8S_COMPAUTH_AUTHENTICATOR_CERT_FILE
-                          value: /etc/argo-rollouts/compauth/a-pf-appl-kargo-cp-lab_certificate.pem
-                        - name: K8S_COMPAUTH_AUTHENTICATOR_PASSWORD_FILE
-                          value: /etc/argo-rollouts/compauth/password.raw
-              EOF
-
-              # Die lokale Kubeconfig verwendet den ServiceAccount-Token des Pods.
-              # Der Job Provider erstellt damit Jobs im lokalen Worker-Cluster.
-              cat > /etc/argo-rollouts/job-cluster/kubeconfig.yaml <<EOF
-              apiVersion: v1
-              kind: Config
-              clusters:
-                - name: local-job-cluster
-                  cluster:
-                    server: https://kubernetes.default.svc
-                    certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              contexts:
-                - name: local-job-cluster
-                  context:
-                    cluster: local-job-cluster
-                    user: local-job-runner
-              current-context: local-job-cluster
-              users:
-                - name: local-job-runner
-                  user:
-                    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-              EOF
-
-              chmod 0640 \
-                /etc/argo-rollouts/control-plane/kubeconfig.yaml \
-                /etc/argo-rollouts/job-cluster/kubeconfig.yaml
-
-              echo "Kubeconfig permissions:"
-
-              ls -ln \
-                /etc/argo-rollouts/control-plane/kubeconfig.yaml \
-                /etc/argo-rollouts/job-cluster/kubeconfig.yaml
-
-              echo "Kubeconfigs created successfully"
-
-          env:
-            - name: CLUSTER_SERVER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.kargoRolloutsVerification.controlPlane.clusterSecretName }}
-                  key: server
-
-            - name: CLUSTER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.kargoRolloutsVerification.controlPlane.clusterSecretName }}
-                  key: name
-
-            - name: CLUSTER_CONFIG
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.kargoRolloutsVerification.controlPlane.clusterSecretName }}
-                  key: config
-
-          volumeMounts:
-            - name: control-plane-kubeconfig
-              mountPath: /etc/argo-rollouts/control-plane
-
-            - name: job-cluster-kubeconfig
-              mountPath: /etc/argo-rollouts/job-cluster
-
-      containers:
-        - name: controller
-          image: "{{ .Values.kargoRolloutsVerification.image.registry }}/{{ .Values.kargoRolloutsVerification.image.repository }}:{{ .Values.kargoRolloutsVerification.image.tag }}"
-          imagePullPolicy: IfNotPresent
-
-          args:
-            - --healthzPort=8080
-            - --metricsPort=8090
-            - --loglevel=debug
-            - --logformat=text
-            - --kloglevel=0
-            - --leader-elect=false
-            - --instance-id={{ $instanceID }}
-            - --kubeconfig={{ .Values.kargoRolloutsVerification.controlPlane.kubeconfigPath }}
-
-          env:
-            - name: ARGO_ROLLOUTS_ANALYSIS_JOB_KUBECONFIG
-              value: {{ .Values.kargoRolloutsVerification.jobCluster.kubeconfigPath | quote }}
-
-            - name: ARGO_ROLLOUTS_ANALYSIS_JOB_NAMESPACE
-              value: {{ .Values.kargoRolloutsVerification.jobCluster.namespace | quote }}
-
-            - name: HTTP_PROXY
-              value: http://outapplpf.pnet.ch:3128
-
-            - name: HTTPS_PROXY
-              value: http://outapplpf.pnet.ch:3128
-
-            - name: NO_PROXY
-              value: >-
-                localhost,127.0.0.1,kubernetes.default.svc,
-                .svc,.cluster.local,.pnet.ch,.pfin.ch,.postfinance.ch,
-                127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,
-                192.168.0.0/16
-
-            - name: K8S_COMPAUTH_AUTHENTICATOR_KEY_FILE
-              value: /etc/argo-rollouts/compauth/a-pf-appl-kargo-cp-lab_key.pem
-
-            - name: K8S_COMPAUTH_AUTHENTICATOR_CERT_FILE
-              value: /etc/argo-rollouts/compauth/a-pf-appl-kargo-cp-lab_certificate.pem
-
-            - name: K8S_COMPAUTH_AUTHENTICATOR_PASSWORD_FILE
-              value: /etc/argo-rollouts/compauth/password.raw
-
-          ports:
-            - name: health
-              containerPort: 8080
-              protocol: TCP
-
-            - name: metrics
-              containerPort: 8090
-              protocol: TCP
-
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 3
-
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: health
-            initialDelaySeconds: 15
-            periodSeconds: 20
-            timeoutSeconds: 3
-            failureThreshold: 3
-
-          securityContext:
-            runAsUser: 999
-            runAsGroup: 999
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-                - ALL
-
-          resources:
-            requests:
-              cpu: 50m
-              memory: 256Mi
-            limits:
-              memory: 1Gi
-
-          volumeMounts:
-            - name: certs
-              mountPath: /etc/ssl/certs
-              readOnly: true
-
-            - name: control-plane-kubeconfig
-              mountPath: /etc/argo-rollouts/control-plane
-              readOnly: true
-
-            - name: job-cluster-kubeconfig
-              mountPath: /etc/argo-rollouts/job-cluster
-              readOnly: true
-
-            - name: compauth
-              mountPath: /etc/argo-rollouts/compauth
-              readOnly: true
-
-            - name: tmp
-              mountPath: /tmp
-
-            - name: compauth-bin
-              mountPath: /opt/compauth-auth
-              subPath: compauth-auth
-              readOnly: true
-
-      volumes:
-        - name: certs
-          emptyDir: { }
-
-        - name: pf-pki
-          secret:
-            secretName: ces-data-p1-shared-pki-all-store
-
-        - name: control-plane-kubeconfig
-          emptyDir: { }
-
-        - name: job-cluster-kubeconfig
-          emptyDir: { }
-
-        - name: compauth
-          secret:
-            secretName: {{ .Values.kargoRolloutsVerification.controlPlane.compauthSecretName }}
-            optional: false
-
-        - name: compauth-bin
-          emptyDir: { }
-
-        - name: tmp
-          emptyDir: { }
-
+        request.namespace in ['appl-' + variables.app + '-e1',
+        'appl-' + variables.app + '-p1']
+      message: "Der Launcher darf nur in Namespaces der eigenen App Jobs anlegen."
 {{- end }}
+
+
