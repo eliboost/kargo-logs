@@ -35,7 +35,9 @@ kind: ValidatingAdmissionPolicy
 metadata:
   name: kargo-verification-launcher-jobs
 spec:
-  failurePolicy: Fail
+  # Waehrend Test und Einfuehrung "Ignore": Ein Konfigurationsfehler blockiert
+  # dann nicht jeden Job im Cluster. Nach dem Test auf "Fail" umstellen.
+  failurePolicy: Ignore
   paramKind:
     apiVersion: batch/v1
     kind: CronJob
@@ -73,5 +75,7 @@ spec:
   paramRef:
     name: verification-smoke
     # Kein "namespace": bei einem namespaced paramKind gilt der Namespace des
-    # Jobs. Fehlt der CronJob dort, wird abgelehnt.
-    parameterNotFoundAction: Deny
+    # Jobs. WICHTIG "Allow": Der Parameter wird fuer JEDEN Job-Create im Cluster
+    # aufgeloest, noch vor matchConditions. Mit "Deny" waere jeder Job in jedem
+    # Namespace ohne CronJob verification-smoke abgelehnt (auch der Controller).
+    parameterNotFoundAction: Allow
