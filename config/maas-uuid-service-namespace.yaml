@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    argocd.postfinance.ch/last-applied-configuration: '{"repoURL":"git@gitlab.pnet.ch:middleware/deployments.git","targetRevision":"main","path":"appl-maas-uuid-service/overlays/e1-k8s-pfnet-lab-d","autosync":{"prune":true,"selfHeal":true},"getRoles":["appl_asmmw"]}'
+    burger.postfinance.ch/last-applied-monitoring-configuration: '{"receivers":{"email":{"to":["smmwpf@postfinance.ch"]},"messageForwarder":{"to":"p1"}}}'
+    kargo.akuity.io/authorized-stage: appl-kargo-maas-uuid-service-e1:e1-k8s-pfnet-lab-d
+    postfinance.ch/sys-appl: ASMMW
+  creationTimestamp: "2026-09-21T07:08:17Z"
+  finalizers:
+  - burger.postfinance.ch/finalizer
+  - argocd.postfinance.ch/finalizer
+  labels:
+    argocd.postfinance.ch/operator-managed: kube-argocd-operator
+    jet.k8s.postfinance.ch/participate: "false"
+    kubernetes.io/metadata.name: appl-maas-uuid-service-e1
+    namespace-creator.postfinance.ch/operator-managed: "true"
+    postfinance.ch/with-admission-controllers: "true"
+  name: appl-maas-uuid-service-e1
+  resourceVersion: "54590386"
+  uid: 9aef2675-3cb5-4045-95c2-58d108046a89
+spec:
+  finalizers:
+  - kubernetes
+status:
+  phase: Active
