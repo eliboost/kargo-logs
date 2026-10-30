@@ -1,0 +1,36 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: e1-k8s-pfnet-lab-c
+
+spec:
+  shard: e1-k8s-pfnet-lab-c
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: maas-uuid-service-lab
+      sources:
+        direct: true
+
+  promotionTemplate:
+    spec:
+      steps:
+        - task:
+            name: promote-maas-uuid-service
+          vars:
+            - name: overlay
+              value: appl-maas-uuid-service/overlays/e1-k8s-pfnet-lab-d
+            - name: argocdURL
+              value: https://pfportal-test.pnet.ch/argocd/applications/kube-argocd-master/
+            - name: argocdApp
+              value: e1-k8s-pfnet-lab-d-appl-maas-uuid-service-e1
+
+  verification:
+    analysisTemplates:
+      - name: maas-metrics-test
+    args:
+      - name: target-namespace
+        value: appl-maas-uuid-service-e1
+
+      - name: kargo-project
+        value: appl-kargo-maas-uuid-service-e1
