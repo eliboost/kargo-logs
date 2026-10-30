@@ -2,8 +2,66 @@
 {{- if ($verification.enabled | default false) }}
 {{- $jobNamespace := required "kargoRolloutsVerification.jobCluster.namespace must be set" $verification.jobCluster.namespace }}
 {{- $instanceID := required "kargoRolloutsVerification.instanceID must be set" $verification.instanceID }}
+{{- /* Name des einen erlaubten CronJobs. Steht in RBAC und in den Policies. */ -}}
+{{- $cronJob := $verification.cronJobName | default "verification-smoke" }}
+{{- /* Erst Warn/Audit, nach dem Test auf ["Deny"] stellen. */ -}}
+{{- $policyActions := $verification.policyActions | default (list "Warn" "Audit") }}
+{{- $launcherPrefix := printf "system:serviceaccount:%s:verification-launcher-" $jobNamespace }}
+{{- $controllerUser := printf "system:serviceaccount:%s:kargo-rollouts-verification-controller" .Release.Namespace }}
+
+# ===========================================================================
+# Modell
+#   Absender   Konto verification-launcher-<Kargo-Projekt> im Job-Namespace.
+#              Auf lab-d erzwingt der Guard, dass es zum AnalysisRun-Namespace passt.
+#   Ziel       Namespace-Annotation kargo.akuity.io/authorized-stage: <Projekt>:<Stage>
+#   Worker     Konto-Suffix muss dem Projekt in der Annotation entsprechen.
+#   CronJob    Nur $cronJob: RBAC (resourceNames) und Policy (ownerReference, Pod-Spec).
+# Konto + RoleBinding pro Projekt kommen aus der Liste kargoRolloutsVerification.launchers.
+# ===========================================================================
 
 ---
+# Controller: eigenes Konto, nur Jobs im Job-Namespace. Keine Secrets, keine
+# Rechte in Ziel-Namespaces. Das Compauth-Secret bekommt der Pod als Volume,
+# dafuer braucht er kein RBAC.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kargo-rollouts-verification-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: kargo-rollouts-verification-controller
+    app.kubernetes.io/instance: {{ .Release.Name }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-verification-controller-jobs
+  namespace: {{ $jobNamespace }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-verification-controller-jobs
+  namespace: {{ $jobNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-verification-controller-jobs
+subjects:
+  - kind: ServiceAccount
+    name: kargo-rollouts-verification-controller
+    namespace: {{ .Release.Namespace }}
+
+---
+# Launcher: nur diese Rechte, und nur dort, wo eine RoleBinding darauf zeigt.
+# Keine ClusterRoleBinding. Bewusst ohne delete jobs (Aufraeumen macht
+# ttlSecondsAfterFinished) und ohne secrets.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -11,128 +69,125 @@ metadata:
 rules:
   - apiGroups: ["batch"]
     resources: ["cronjobs"]
-    resourceNames: ["verification-smoke"]
+    resourceNames: [{{ $cronJob | quote }}]
     verbs: ["get"]
-
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["create", "get", "list", "watch", "delete"]
-
+    verbs: ["create", "get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
-
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
 
+{{- /*
+  Onboarding pro Kargo-Projekt (ein Eintrag je Worker-Cluster):
+    launchers:
+      - project: appl-kargo-maas-uuid-service-e1
+        targetNamespaces: [appl-maas-uuid-service-e1]
+  Die Ziel-Namespaces muessen existieren, sonst schlaegt der Sync fehl.
+*/ -}}
+{{- range ($verification.launchers | default list) }}
+{{- $project := required "launchers[].project must be set" .project }}
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: verification-launcher
-  namespace: {{ .Release.Namespace }}
-
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: verification-launcher
+  name: verification-launcher-{{ $project }}
   namespace: {{ $jobNamespace }}
-
+{{- range (.targetNamespaces | default list) }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: kargo-verification-launcher
-  namespace: {{ .Release.Namespace }}
+  name: verification-launcher-{{ $project }}
+  namespace: {{ . }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: kargo-verification-launcher
 subjects:
   - kind: ServiceAccount
-    name: verification-launcher
-    namespace: {{ .Release.Namespace }}
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: kargo-verification-launcher
-  namespace: {{ $jobNamespace }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kargo-verification-launcher
-subjects:
-  - kind: ServiceAccount
-    name: verification-launcher
+    name: verification-launcher-{{ $project }}
     namespace: {{ $jobNamespace }}
-
-{{- if $verification.jobCluster.createClusterRoleBinding }}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kargo-verification-launcher-global
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kargo-verification-launcher
-subjects:
-  - kind: ServiceAccount
-    name: verification-launcher
-    namespace: {{ .Release.Namespace }}
-
-  - kind: Group
-    name: "system:serviceaccounts:{{ $jobNamespace }}"
-    apiGroup: rbac.authorization.k8s.io
+{{- end }}
 {{- end }}
 
 ---
+# Policy 1: Ein Launcher darf nur Jobs anlegen, die aus dem erlaubten CronJob stammen.
+# Ohne paramKind, damit sie auch greift, wenn der CronJob im Namespace fehlt.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: kargo-verification-launcher-cronjob
+spec:
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["jobs"]
+  matchConditions:
+    - name: launcher-only
+      expression: >-
+        request.userInfo.username.startsWith('{{ $launcherPrefix }}')
+  validations:
+    - expression: >-
+        has(object.metadata.ownerReferences) &&
+        object.metadata.ownerReferences.exists(o,
+        o.kind == 'CronJob' && o.name == '{{ $cronJob }}')
+      message: "Launcher jobs must be created from the {{ $cronJob }} CronJob."
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: kargo-verification-launcher-cronjob
+spec:
+  policyName: kargo-verification-launcher-cronjob
+  validationActions: {{ $policyActions | toJson }}
+
+---
+# Policy 2: Das Job gehoert wirklich zu diesem CronJob (uid) und hat dessen Pod-Spec.
+# Fehlt der CronJob im Namespace, wird nichts geprueft (Allow). Das deckt Policy 1 ab,
+# weil dort die ownerReference verlangt wird. Es bleibt eine Restluecke: eine
+# erfundene ownerReference in einem Namespace ohne den CronJob. Der Garbage Collector
+# raeumt solche Jobs wieder ab.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: kargo-verification-launcher-jobs
 spec:
   failurePolicy: Ignore
-
   paramKind:
     apiVersion: batch/v1
     kind: CronJob
-
   matchConstraints:
     resourceRules:
       - apiGroups: ["batch"]
         apiVersions: ["v1"]
-        operations:
-          - CREATE
-        resources:
-          - jobs
-
+        operations: ["CREATE"]
+        resources: ["jobs"]
   matchConditions:
     - name: launcher-only
       expression: >-
-        request.userInfo.username.contains(':verification-launcher')
-
+        request.userInfo.username.startsWith('{{ $launcherPrefix }}')
   validations:
     - expression: >-
         params != null &&
         has(object.metadata.ownerReferences) &&
         object.metadata.ownerReferences.exists(o,
-          o.kind == 'CronJob' &&
-          o.name == params.metadata.name &&
-          o.uid == params.metadata.uid)
-      message: >-
-        Only verification-smoke may be used to create verification jobs.
-
+        o.kind == 'CronJob' &&
+        o.name == params.metadata.name &&
+        o.uid == params.metadata.uid)
+      message: "The job is not owned by the {{ $cronJob }} CronJob of this namespace."
     - expression: >-
         params != null &&
         dyn(object.spec.template.spec) ==
         dyn(params.spec.jobTemplate.spec.template.spec)
-      message: >-
-        Job pod specification must match verification-smoke.
+      message: "The job pod specification must match the {{ $cronJob }} CronJob."
 
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -141,75 +196,46 @@ metadata:
   name: kargo-verification-launcher-jobs
 spec:
   policyName: kargo-verification-launcher-jobs
-
-  validationActions:
-    - Deny
-
+  validationActions: {{ $policyActions | toJson }}
   paramRef:
-    name: verification-smoke
+    name: {{ $cronJob }}
     parameterNotFoundAction: Allow
 
 ---
+# Policy 3: In welchem Namespace darf ein Launcher Jobs anlegen?
+# Nur dort, wo die Annotation kargo.akuity.io/authorized-stage sein Projekt nennt.
+# Das Projekt steht im Kontonamen, und den kann der Absender nicht faelschen.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: kargo-verification-launcher-scope
 spec:
   failurePolicy: Ignore
-
   matchConstraints:
     resourceRules:
       - apiGroups: ["batch"]
         apiVersions: ["v1"]
-        operations:
-          - CREATE
-        resources:
-          - jobs
-
+        operations: ["CREATE"]
+        resources: ["jobs"]
   matchConditions:
     - name: launcher-only
       expression: >-
-        request.userInfo.username.contains(':verification-launcher')
-
+        request.userInfo.username.startsWith('{{ $launcherPrefix }}')
   variables:
-    - name: namespaceAuthorizedStage
+    - name: project
+      expression: >-
+        request.userInfo.username.substring(size('{{ $launcherPrefix }}'))
+    - name: authorizedStage
       expression: >-
         has(namespaceObject.metadata.annotations) &&
-        'kargo.akuity.io/authorized-stage'
-        in namespaceObject.metadata.annotations
-        ? namespaceObject.metadata.annotations[
-            'kargo.akuity.io/authorized-stage'
-          ]
+        'kargo.akuity.io/authorized-stage' in namespaceObject.metadata.annotations
+        ? namespaceObject.metadata.annotations['kargo.akuity.io/authorized-stage']
         : ''
-
-    - name: namespaceProject
-      expression: >-
-        variables.namespaceAuthorizedStage.contains(':')
-        ? variables.namespaceAuthorizedStage.substring(
-            0,
-            variables.namespaceAuthorizedStage.indexOf(':'))
-        : variables.namespaceAuthorizedStage
-
-    - name: jobProject
-      expression: >-
-        has(object.metadata.labels) &&
-        'kargo-project'
-        in object.metadata.labels
-        ? object.metadata.labels['kargo-project']
-        : ''
-
   validations:
     - expression: >-
-        variables.jobProject != '' &&
-        variables.namespaceProject != '' &&
-        variables.jobProject == variables.namespaceProject
-
-      messageExpression: >-
-        "Kargo project mismatch. Job project '" +
-        variables.jobProject +
-        "' is not allowed in namespace. Expected '" +
-        variables.namespaceProject +
-        "'."
+        variables.project != '' &&
+        variables.authorizedStage.startsWith(variables.project + ':')
+      message: "The target namespace does not authorize this Kargo project (annotation kargo.akuity.io/authorized-stage)."
 
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -218,9 +244,73 @@ metadata:
   name: kargo-verification-launcher-scope
 spec:
   policyName: kargo-verification-launcher-scope
+  validationActions: {{ $policyActions | toJson }}
 
-  validationActions:
-    - Deny
+---
+# Policy 4: Schutz des Job-Namespace. Der Controller legt dort die Launcher-Jobs an,
+# im selben Namespace liegt das Compauth-Secret. Ein Pod darf jedes Secret seines
+# Namespace mounten oder per env lesen, dafuer braucht er kein RBAC. Darum nur
+# emptyDir, keine Secret-Referenzen, nur Launcher-Konten. Das gilt unabhaengig
+# davon, was lab-d durchgelassen hat.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: kargo-launcher-job-hardening
+spec:
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["jobs"]
+  matchConditions:
+    - name: controller-jobs
+      expression: >-
+        request.userInfo.username == '{{ $controllerUser }}'
+  variables:
+    - name: pod
+      expression: object.spec.template.spec
+  validations:
+    - expression: >-
+        has(variables.pod.serviceAccountName) &&
+        variables.pod.serviceAccountName.startsWith('verification-launcher-')
+      message: "Launcher jobs must run as a verification-launcher-<project> ServiceAccount."
+    - expression: >-
+        !has(variables.pod.volumes) ||
+        variables.pod.volumes.all(v, has(v.emptyDir))
+      message: "Only emptyDir volumes are allowed in launcher jobs."
+    - expression: >-
+        variables.pod.containers.all(c,
+        !has(c.envFrom) &&
+        (!has(c.env) || c.env.all(e, !has(e.valueFrom))))
+      message: "Launcher jobs must not reference secrets or configmaps through env."
+    - expression: >-
+        !has(variables.pod.initContainers) ||
+        variables.pod.initContainers.all(c,
+        !has(c.envFrom) &&
+        (!has(c.env) || c.env.all(e, !has(e.valueFrom))))
+      message: "Launcher jobs must not reference secrets or configmaps through env (init containers)."
+    - expression: >-
+        (!has(variables.pod.hostNetwork) || !variables.pod.hostNetwork) &&
+        (!has(variables.pod.hostPID) || !variables.pod.hostPID) &&
+        (!has(variables.pod.hostIPC) || !variables.pod.hostIPC)
+      message: "Host namespaces are not allowed in launcher jobs."
+    - expression: >-
+        variables.pod.containers.all(c,
+        !has(c.securityContext) ||
+        !has(c.securityContext.privileged) ||
+        !c.securityContext.privileged)
+      message: "Privileged containers are not allowed in launcher jobs."
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: kargo-launcher-job-hardening
+spec:
+  policyName: kargo-launcher-job-hardening
+  validationActions: {{ $policyActions | toJson }}
 
 ---
 apiVersion: apps/v1
@@ -253,7 +343,7 @@ spec:
         prometheus.io/path: "/metrics"
 
     spec:
-      serviceAccountName: verification-launcher
+      serviceAccountName: kargo-rollouts-verification-controller
       automountServiceAccountToken: true
 
       securityContext:
