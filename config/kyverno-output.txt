@@ -23,7 +23,7 @@ validatingpolicies.policies.kyverno.io                                        20
 
 
 
-kc() { kubectl --context "$ctx" --request-timeout=10s "$@"; }
+nazarieli@w8xhb2 ~ % kc() { kubectl --context "$ctx" --request-timeout=10s "$@"; }
 for ctx in $(kubectl config get-contexts -o name); do
   ver=$(kc version -o yaml 2>/dev/null | awk '/^serverVersion:/{f=1} f&&/gitVersion:/{print $2; exit}')
   [ -z "$ver" ] && { printf '%-34s NICHT ERREICHBAR\n' "$ctx"; continue; }
@@ -32,3 +32,81 @@ for ctx in $(kubectl config get-contexts -o name); do
   kimg=$(kc get deploy -A -l app.kubernetes.io/component=background-controller -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null)
   printf '%-34s k8s=%-10s VAP-v1=%-4s Kyverno-CRD=%-4s Kyverno=%s\n' "$ctx" "$ver" "$([ "$vap" -gt 0 ] && echo ja || echo NEIN)" "$([ "$kcrd" -gt 0 ] && echo ja || echo NEIN)" "${kimg:--}"
 done
+e1-k8s-gpu-b                       k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-gpu-b-admin                 k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-nevis-a                     k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-nevis-a-admin               k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-pfnet-a                     k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-pfnet-a-admin               k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-pfnet-lab-a                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-a-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-b                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-b-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-c                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-c-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-d                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-d-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-e                 k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+e1-k8s-pfnet-lab-e-admin           k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+e1-k8s-pfnet-lab-f                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-f-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-h                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-pfnet-lab-h-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-pfnet-lab-t                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-t-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-u                 NICHT ERREICHBAR
+e1-k8s-pfnet-lab-u-admin           NICHT ERREICHBAR
+e1-k8s-pfnet-lab-v                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-v-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-w                 k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-lab-w-admin           k8s=v1.36.4    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.2
+e1-k8s-pfnet-poc-a                 k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+e1-k8s-pfnet-poc-a-admin           k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+p1-k8s-core-a                      k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-core-a-admin                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-crossplane-a                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-crossplane-a-admin          k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-crossplane-b                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-crossplane-b-admin          k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-management-a                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-management-a-admin          k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-management-b                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-management-b-admin          k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nebu-a                      k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nebu-a-admin                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nucleus-a                   k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nucleus-a-admin             k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nucleus-b                   k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nucleus-b-admin             k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nucleus-g                   k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-nucleus-g-admin             k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-online-a                    k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-online-a-admin              k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-pci-a                       NICHT ERREICHBAR
+p1-k8s-pci-a-admin                 NICHT ERREICHBAR
+p1-k8s-pcilight-a                  k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-pcilight-a-admin            k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-pciproxy-a                  NICHT ERREICHBAR
+p1-k8s-pciproxy-a-admin            NICHT ERREICHBAR
+p1-k8s-pfnet-a                     k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+p1-k8s-pfnet-a-admin               k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=NEIN Kyverno=-
+t1-k8s-core-a                      k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-core-a-admin                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-nucleus-a                   k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-nucleus-a-admin             k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-nucleus-g                   k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-nucleus-g-admin             k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-nucleus-poc-a               k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-nucleus-poc-a-admin         k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-online-a                    k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-online-a-admin              k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pci-a                       k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pci-a-admin                 k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pcilight-a                  k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pcilight-a-admin            k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pcilight-nevis-a            k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pcilight-nevis-a-admin      k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pciproxy-a                  k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t1-k8s-pciproxy-a-admin            k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t2-k8s-core-a                      k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
+t2-k8s-core-a-admin                k8s=v1.36.3    VAP-v1=ja   Kyverno-CRD=ja   Kyverno=linux-kyverno-docker-remote.repo.pnet.ch/kyverno/background-controller:v1.19.1
