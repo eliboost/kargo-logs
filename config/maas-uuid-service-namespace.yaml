@@ -1,0 +1,103 @@
+apiVersion: namespace-creator.postfinance.ch/v1beta1
+kind: Project
+metadata:
+  annotations:
+    argocd.argoproj.io/installation-id: lab-master
+    argocd.argoproj.io/tracking-id: e1-k8s-pfnet-lab-d-kube-projects:namespace-creator.postfinance.ch/Project:kube-projects/appl-maas-uuid-service-e1
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"namespace-creator.postfinance.ch/v1beta1","kind":"Project","metadata":{"annotations":{"argocd.argoproj.io/installation-id":"lab-master","argocd.argoproj.io/tracking-id":"e1-k8s-pfnet-lab-d-kube-projects:namespace-creator.postfinance.ch/Project:kube-projects/appl-maas-uuid-service-e1"},"labels":{"argocd.postfinance.ch/instance":"e1-k8s-pfnet-lab-d-kube-projects"},"name":"appl-maas-uuid-service-e1"},"spec":{"app":"ASMMW","deploy":{"argocd":{"autosync":{"prune":true,"selfHeal":true},"path":"appl-maas-uuid-service/overlays/e1-k8s-pfnet-lab-d","repoURL":"git@gitlab.pnet.ch:middleware/deployments.git","targetRevision":"main"}},"monitoring":{"receivers":{"email":{"to":["smmwpf@postfinance.ch"]}}},"namespace":{"annotations":{"kargo.akuity.io/authorized-stage":"appl-kargo-maas-uuid-service-e1:e1-k8s-pfnet-lab-d"},"name":"appl-maas-uuid-service-e1","permissions":{"owner":"appl_asmmw"},"vault":{"access":[{"role":"tf_team_asmmw"}]}}}}
+  creationTimestamp: "2026-09-21T07:08:05Z"
+  finalizers:
+  - namespace-creator.postfinance.ch/finalizer
+  generation: 4
+  labels:
+    argocd.postfinance.ch/instance: e1-k8s-pfnet-lab-d-kube-projects
+  name: appl-maas-uuid-service-e1
+  resourceVersion: "54590366"
+  uid: 16c42457-a6d6-418c-abc1-8b5b8bac3ee4
+spec:
+  app: ASMMW
+  deploy:
+    argocd:
+      autosync:
+        prune: true
+        selfHeal: true
+      path: appl-maas-uuid-service/overlays/e1-k8s-pfnet-lab-d
+      repoURL: git@gitlab.pnet.ch:middleware/deployments.git
+      targetRevision: main
+  monitoring:
+    receivers:
+      email:
+        to:
+        - smmwpf@postfinance.ch
+      messageForwarder:
+        to: p1
+  namespace:
+    annotations:
+      kargo.akuity.io/authorized-stage: appl-kargo-maas-uuid-service-e1:e1-k8s-pfnet-lab-d
+    name: appl-maas-uuid-service-e1
+    permissions:
+      owner: appl_asmmw
+    vault:
+      access:
+      - role: tf_team_asmmw
+        subPaths:
+        - k8s/e1-k8s-pfnet-lab/appl-maas-uuid-service-e1
+        - gitlab/access_tokens
+status:
+  conditions:
+  - lastTransitionTime: "2026-09-21T07:08:20Z"
+    message: Namespace exists.
+    reason: Ready
+    status: "True"
+    type: NamespaceResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Resources of kind "ResourceQuota" are ready.
+    reason: Ready
+    status: "True"
+    type: ResourceQuotaResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Resources of kind "RoleBinding" are ready.
+    reason: Ready
+    status: "True"
+    type: RoleBindingResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Resources of kind "NamespaceAccess" are ready.
+    reason: Ready
+    status: "True"
+    type: NamespaceAccessResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:17Z"
+    message: Resource of kind "Whitelist" is not necessary.
+    reason: NotNecessary
+    status: "True"
+    type: WhitelistResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Resources of kind "LimitRange" are ready.
+    reason: Ready
+    status: "True"
+    type: LimitRangeResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Resources of kind "NetworkPolicy" are ready.
+    reason: Ready
+    status: "True"
+    type: NetworkPolicyResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Resources of kind "CiliumNetworkPolicy" are ready.
+    reason: Ready
+    status: "True"
+    type: CiliumNetworkPolicyResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Resources of kind "SecretStore" are ready.
+    reason: Ready
+    status: "True"
+    type: SecretStoreResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:17Z"
+    message: Resource of kind "VeleroSchedule" is not necessary.
+    reason: NotNecessary
+    status: "True"
+    type: VeleroScheduleResourceReady
+  - lastTransitionTime: "2026-09-21T07:08:26Z"
+    message: Project ready for deployments.
+    reason: Ready
+    status: "True"
+    type: Ready
