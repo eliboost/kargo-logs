@@ -1,82 +1,233 @@
 {{- $verification := .Values.kargoRolloutsVerification | default dict }}
 {{- if ($verification.enabled | default false) }}
-
-{{- $instanceID := required
-  "kargoRolloutsVerification.instanceID must be set when verification is enabled"
-  $verification.instanceID
-}}
-
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: kargo-rollouts-verification-controller
-  namespace: {{ .Release.Namespace }}
-  labels:
-    app.kubernetes.io/name: kargo-rollouts-verification-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- $jobNamespace := required "kargoRolloutsVerification.jobCluster.namespace must be set" $verification.jobCluster.namespace }}
+{{- $instanceID := required "kargoRolloutsVerification.instanceID must be set" $verification.instanceID }}
 
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ .Release.Name }}-rollouts-verification-job-runner
-  labels:
-    app.kubernetes.io/name: kargo-rollouts-verification-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: kargo-verification-launcher
 rules:
-  - apiGroups:
-      - batch
-    resources:
-      - jobs
-      - cronjobs
-    verbs:
-      - create
-      - delete
-      - get
-      - list
-      - watch
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    resourceNames: ["verification-smoke"]
+    verbs: ["get"]
 
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
 
-  - apiGroups:
-      - ""
-    resources:
-      - pods/log
-    verbs:
-      - get
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
 
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
 
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get"]
+
+  - apiGroups: ["argoproj.io"]
+    resources: ["analysisruns", "analysistemplates", "clusteranalysistemplates"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verification-launcher
+  namespace: {{ .Release.Namespace }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kargo-verification-launcher
+  namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kargo-verification-launcher
+subjects:
+  - kind: ServiceAccount
+    name: verification-launcher
+    namespace: {{ .Release.Namespace }}
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verification-launcher
+  namespace: {{ $jobNamespace }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kargo-verification-launcher
+  namespace: {{ $jobNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kargo-verification-launcher
+subjects:
+  - kind: ServiceAccount
+    name: verification-launcher
+    namespace: {{ $jobNamespace }}
+
+{{- if $verification.jobCluster.createClusterRoleBinding }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ .Release.Name }}-rollouts-verification-job-runner
-  labels:
-    app.kubernetes.io/name: kargo-rollouts-verification-controller
-    app.kubernetes.io/instance: {{ .Release.Name }}
+  name: kargo-verification-launcher-global
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ .Release.Name }}-rollouts-verification-job-runner
+  name: kargo-verification-launcher
 subjects:
   - kind: ServiceAccount
-    name: kargo-rollouts-verification-controller
+    name: verification-launcher
     namespace: {{ .Release.Namespace }}
+  - kind: Group
+    name: "system:serviceaccounts:{{ $jobNamespace }}"
+    apiGroup: rbac.authorization.k8s.io
+{{- end }}
+
+{{- range ($verification.jobCluster.additionalServiceAccounts | default (list "appl_asmmw" "maas")) }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verification-launcher-{{ . | replace "_" "-" }}
+  namespace: {{ $jobNamespace }}
+{{- end }}
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: kargo-verification-launcher-jobs
+spec:
+  failurePolicy: Ignore
+  paramKind:
+    apiVersion: batch/v1
+    kind: CronJob
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["jobs"]
+  matchConditions:
+    - name: only-launchers
+      expression: >-
+        request.userInfo.username.startsWith(
+        'system:serviceaccount:' + request.namespace + ':verification-launcher') ||
+        request.userInfo.username.startsWith(
+        'system:serviceaccount:{{ $jobNamespace }}:verification-launcher') ||
+        request.userInfo.username.startsWith(
+        'system:serviceaccount:{{ .Release.Namespace }}:verification-launcher')
+  validations:
+    - expression: >-
+        params != null &&
+        has(object.metadata.ownerReferences) &&
+        object.metadata.ownerReferences.exists(o,
+        o.kind == 'CronJob' &&
+        o.name == params.metadata.name &&
+        o.uid == params.metadata.uid)
+      message: "The launcher is only allowed to create jobs from the verification-smoke CronJob."
+
+    - expression: >-
+        params != null &&
+        dyn(object.spec.template.spec) ==
+        dyn(params.spec.jobTemplate.spec.template.spec)
+      message: "The Job pod spec does not match the verification-smoke CronJob."
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: kargo-verification-launcher-jobs
+spec:
+  policyName: kargo-verification-launcher-jobs
+  validationActions:
+    - Deny
+
+  paramRef:
+    name: verification-smoke
+    parameterNotFoundAction: Allow
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: kargo-verification-launcher-scope
+spec:
+  failurePolicy: Ignore
+
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["jobs"]
+
+  matchConditions:
+    - name: per-app-launcher
+      expression: >-
+        request.userInfo.username.startsWith('system:serviceaccount:' + request.namespace + ':verification-launcher') ||
+        request.userInfo.username.startsWith('system:serviceaccount:{{ $jobNamespace }}:verification-launcher') ||
+        request.userInfo.username.startsWith('system:serviceaccount:{{ .Release.Namespace }}:verification-launcher')
+
+  variables:
+    - name: saName
+      expression: >-
+        request.userInfo.username.startsWith('system:serviceaccount:') ?
+        request.userInfo.username.substring(request.userInfo.username.lastIndexOf(':') + 1) :
+        ''
+
+    - name: ownerFromSA
+      expression: >-
+        variables.saName.startsWith('verification-launcher-') ?
+        variables.saName.substring(size('verification-launcher-')) :
+        ''
+
+    - name: targetOwner
+      expression: >-
+        has(namespaceObject.metadata.labels) &&
+        'owner' in namespaceObject.metadata.labels
+        ? namespaceObject.metadata.labels['owner']
+        : ''
+
+  validations:
+    - expression: >-
+        variables.saName == '' ||
+        (variables.ownerFromSA != '' && variables.targetOwner != '' && (variables.targetOwner == variables.ownerFromSA || variables.targetOwner.replace('_', '-') == variables.ownerFromSA)) ||
+        (variables.ownerFromSA == '' && (request.namespace == '{{ $jobNamespace }}' || request.namespace == '{{ .Release.Namespace }}'))
+      message: "Multi-Tenant violation: The launcher ServiceAccount must have a suffix matching the target namespace 'owner' label (e.g. verification-launcher-appl-asmmw). Generic launcher is restricted to infrastructure namespaces."
+
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: kargo-verification-launcher-scope
+spec:
+  policyName: kargo-verification-launcher-scope
+  validationActions:
+    - Deny
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -108,7 +259,7 @@ spec:
         prometheus.io/path: "/metrics"
 
     spec:
-      serviceAccountName: kargo-rollouts-verification-controller
+      serviceAccountName: verification-launcher
       automountServiceAccountToken: true
 
       securityContext:
@@ -117,7 +268,6 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
 
       initContainers:
-        # Erstellt den kombinierten internen Truststore.
         - name: add-pf-pki-all
           image: linux-docker-local.repo.pnet.ch/pf/alpine:3.24.2202610140623
           imagePullPolicy: Always
@@ -288,7 +438,7 @@ spec:
                     tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
               EOF
 
-              chmod 0640 \
+              chmod 0644 \
                 /etc/argo-rollouts/control-plane/kubeconfig.yaml \
                 /etc/argo-rollouts/job-cluster/kubeconfig.yaml
 
