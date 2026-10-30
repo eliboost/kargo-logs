@@ -1,0 +1,61 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: maas-metrics-test
+spec:
+  args:
+    - name: target-namespace
+
+    - name: kargo-project
+
+    - name: cronjob
+      value: verification-smoke
+
+    - name: timeout
+      value: "300"
+
+    - name: password
+      valueFrom:
+        secretKeyRef:
+          name: kargo-metrics
+          key: password
+
+  metrics:
+    - name: verification-job
+      provider:
+        job:
+          spec:
+            template:
+              spec:
+                serviceAccountName: verification-launcher
+                containers:
+                  - name: launcher
+                    image: docker-remote.repo.pnet.ch/bitnami/kubectl:latest
+                    command: ["/bin/sh", "-c"]
+                    args:
+                      - |
+                        set -eu
+                        echo "Starte Verifikation für Metriken..."
+                        
+                        # Die Logik hier entspricht dem Launcher-Skript, 
+                        # das den Job aus dem CronJob 'verification-smoke' erstellt.
+                        # Dies triggert die ValidatingAdmissionPolicy erfolgreich.
+                        
+                        JOB_NAME="vf-metrics-$(date +%s)"
+                        kubectl create job "$JOB_NAME" \
+                          -n "$TARGET_NS" \
+                          --from="cronjob/$CRONJOB"
+                        
+                        # Warten auf Abschluss (Logik wie in AnalysisRun Historie)
+                        kubectl wait --for=condition=complete job/"$JOB_NAME" -n "$TARGET_NS" --timeout="${TIMEOUT}s"
+                    env:
+                      - name: TARGET_NS
+                        value: "{{args.target-namespace}}"
+                      - name: CRONJOB
+                        value: "{{args.cronjob}}"
+                      - name: TIMEOUT
+                        value: "{{args.timeout}}"
+                      - name: PROM_PW
+                        value: "{{args.password}}"
+                restartPolicy: Never
+            backoffLimit: 0
