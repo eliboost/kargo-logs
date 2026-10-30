@@ -1,0 +1,21 @@
+nazarieli@w8xhb2 ~ % k get crd | grep -i kyverno
+cleanuppolicies.kyverno.io                                                    2026-10-26T08:45:12Z
+clustercleanuppolicies.kyverno.io                                             2026-10-26T08:45:12Z
+clusterephemeralreports.reports.kyverno.io                                    2026-10-26T08:45:12Z
+clusterpolicies.kyverno.io                                                    2026-10-26T08:45:12Z
+deletingpolicies.policies.kyverno.io                                          2026-10-26T08:45:12Z
+ephemeralreports.reports.kyverno.io                                           2026-10-26T08:45:12Z
+generatingpolicies.policies.kyverno.io                                        2026-10-26T08:45:12Z
+globalcontextentries.kyverno.io                                               2026-10-26T08:45:12Z
+imagevalidatingpolicies.policies.kyverno.io                                   2026-10-26T08:45:12Z
+mutatingpolicies.policies.kyverno.io                                          2026-10-26T08:45:12Z
+namespaceddeletingpolicies.policies.kyverno.io                                2026-10-26T08:45:12Z
+namespacedgeneratingpolicies.policies.kyverno.io                              2026-10-26T08:45:12Z
+namespacedimagevalidatingpolicies.policies.kyverno.io                         2026-10-26T08:45:12Z
+namespacedmutatingpolicies.policies.kyverno.io                                2026-10-26T08:45:12Z
+namespacedvalidatingpolicies.policies.kyverno.io                              2026-10-26T08:45:12Z
+policies.kyverno.io                                                           2026-10-26T08:45:13Z
+policyexceptions.kyverno.io                                                   2026-10-26T08:45:12Z
+policyexceptions.policies.kyverno.io                                          2026-10-26T08:45:12Z
+updaterequests.kyverno.io                                                     2026-10-26T08:45:12Z
+validatingpolicies.policies.kyverno.io                                        2026-10-26T08:45:12Z
