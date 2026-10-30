@@ -1,0 +1,33 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Project
+metadata:
+  annotations:
+    argocd.argoproj.io/installation-id: lab-master
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/tracking-id: appl-kargo-kube-appsets:kargo.akuity.io/Project:appl-kargo-kube-appsets/kube-reaper
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"kargo.akuity.io/v1alpha1","kind":"Project","metadata":{"annotations":{"argocd.argoproj.io/installation-id":"lab-master","argocd.argoproj.io/sync-wave":"-1","argocd.argoproj.io/tracking-id":"appl-kargo-kube-appsets:kargo.akuity.io/Project:appl-kargo-kube-appsets/kube-reaper"},"labels":{"argocd.postfinance.ch/instance":"appl-kargo-kube-appsets"},"name":"kube-reaper"}}
+  creationTimestamp: "2026-10-29T15:40:53Z"
+  finalizers:
+  - kargo.akuity.io/finalizer
+  generation: 1
+  labels:
+    argocd.postfinance.ch/instance: appl-kargo-kube-appsets
+  name: kube-reaper
+  resourceVersion: "81603734"
+  uid: b3c9b8e8-4874-4975-92e4-272426ceabc1
+status:
+  conditions:
+  - lastTransitionTime: "2026-10-29T15:40:53Z"
+    message: Project is synced and ready for use
+    observedGeneration: 1
+    reason: Synced
+    status: "True"
+    type: Ready
+  stats:
+    stages:
+      count: 4
+      health: {}
+    warehouses:
+      count: 1
+      health: {}
