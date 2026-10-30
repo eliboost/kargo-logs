@@ -1,0 +1,114 @@
+kind: AnalysisRun
+apiVersion: argoproj.io/v1alpha1
+metadata:
+  name: e1-k8s-pfnet-lab-c.01m66q1egxer6s333fhtdywj13.6e7b5cc
+  namespace: appl-kargo-maas-uuid-service-e1
+  uid: f7913bbe-e0da-42ff-aa34-da969095fd49
+  resourceVersion: "83622997"
+  generation: 4
+  creationTimestamp: 2026-10-30T15:32:17Z
+  labels:
+    argo-rollouts.argoproj.io/controller-instance-id: e1-k8s-pfnet-lab-c
+    kargo.akuity.io/freight-collection: 6e7b5cc3ecf819d9a0bdd0ed8a42c866e40b482a
+    kargo.akuity.io/stage: e1-k8s-pfnet-lab-c
+  annotations:
+    kargo.akuity.io/promotion: e1-k8s-pfnet-lab-c.01m618wabsbhdtw6wdc6fh7das.097116a
+  ownerReferences:
+    - apiVersion: kargo.akuity.io/v1alpha1
+      kind: Freight
+      name: 097116a7246830ee96a9dad8341987bb49571b93
+      uid: 3511dee9-b4d6-4caa-86fe-0ff6e1f9fd8d
+      blockOwnerDeletion: false
+spec:
+  metrics:
+    - name: verification-job
+      provider:
+        job:
+          metadata: {}
+          spec:
+            backoffLimit: 0
+            template:
+              metadata: {}
+              spec:
+                containers:
+                  - name: launcher
+                    image: docker-remote.repo.pnet.ch/bitnami/kubectl:latest
+                    command:
+                      - /bin/sh
+                      - -c
+                    args:
+                      - >
+                        set -eu
+
+                        echo "Starte Verifikation für Metriken..."
+
+
+                        # Die Logik hier entspricht dem Launcher-Skript, 
+
+                        # das den Job aus dem CronJob 'verification-smoke'
+                        erstellt.
+
+                        # Dies triggert die ValidatingAdmissionPolicy
+                        erfolgreich.
+
+
+                        JOB_NAME="vf-metrics-$(date +%s)"
+
+                        kubectl create job "$JOB_NAME" \
+                          -n "$TARGET_NS" \
+                          --from="cronjob/$CRONJOB"
+
+                        # Warten auf Abschluss (Logik wie in AnalysisRun
+                        Historie)
+
+                        kubectl wait --for=condition=complete job/"$JOB_NAME" -n
+                        "$TARGET_NS" --timeout="${TIMEOUT}s"
+                    env:
+                      - name: TARGET_NS
+                        value: "{{args.target-namespace}}"
+                      - name: CRONJOB
+                        value: "{{args.cronjob}}"
+                      - name: TIMEOUT
+                        value: "{{args.timeout}}"
+                      - name: PROM_PW
+                        value: "{{args.password}}"
+                    resources: {}
+                restartPolicy: Never
+                serviceAccountName: verification-launcher-maas
+  args:
+    - name: target-namespace
+      value: appl-velero-e2e-test-vsphere
+    - name: cronjob
+      value: verification-smoke
+    - name: timeout
+      value: "300"
+    - name: password
+      valueFrom:
+        secretKeyRef:
+          name: kargo-metrics
+          key: password
+  terminate: true
+status:
+  phase: Successful
+  message: Run Terminated
+  metricResults:
+    - name: verification-job
+      phase: Successful
+      measurements:
+        - phase: Successful
+          message: Metric Terminated
+          startedAt: 2026-10-30T15:32:17Z
+          finishedAt: 2026-10-30T15:32:54Z
+          metadata:
+            job-name: f7913bbe-e0da-42ff-aa34-da969095fd49.verification-job.1
+            job-namespace: kube-kargo-workloads
+      message: Metric Terminated
+      count: 1
+      successful: 1
+      consecutiveSuccess: 1
+  startedAt: 2026-10-30T15:32:17Z
+  runSummary:
+    count: 1
+    successful: 1
+  dryRunSummary: {}
+  completedAt: 2026-10-30T15:32:54Z
