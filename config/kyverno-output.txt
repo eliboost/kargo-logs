@@ -19,3 +19,16 @@ policyexceptions.kyverno.io                                                   20
 policyexceptions.policies.kyverno.io                                          2026-10-26T08:45:12Z
 updaterequests.kyverno.io                                                     2026-10-26T08:45:12Z
 validatingpolicies.policies.kyverno.io                                        2026-10-26T08:45:12Z
+
+
+
+
+kc() { kubectl --context "$ctx" --request-timeout=10s "$@"; }
+for ctx in $(kubectl config get-contexts -o name); do
+  ver=$(kc version -o yaml 2>/dev/null | awk '/^serverVersion:/{f=1} f&&/gitVersion:/{print $2; exit}')
+  [ -z "$ver" ] && { printf '%-34s NICHT ERREICHBAR\n' "$ctx"; continue; }
+  vap=$(kc get --raw /apis/admissionregistration.k8s.io/v1 2>/dev/null | grep -c '"validatingadmissionpolicies"')
+  kcrd=$(kc get crd clusterpolicies.kyverno.io -o name 2>/dev/null | wc -l)
+  kimg=$(kc get deploy -A -l app.kubernetes.io/component=background-controller -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' 2>/dev/null)
+  printf '%-34s k8s=%-10s VAP-v1=%-4s Kyverno-CRD=%-4s Kyverno=%s\n' "$ctx" "$ver" "$([ "$vap" -gt 0 ] && echo ja || echo NEIN)" "$([ "$kcrd" -gt 0 ] && echo ja || echo NEIN)" "${kimg:--}"
+done
