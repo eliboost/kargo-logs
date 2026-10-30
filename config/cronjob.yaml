@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: verification-smoke
+spec:
+  suspend: true
+  schedule: "0 0 1 1 *"
+  concurrencyPolicy: Forbid
+
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+
+      template:
+        spec:
+          restartPolicy: Never
+
+          containers:
+            - name: verify
+              image: linux-docker-local.repo.pnet.ch/pf/kubernetes:1.30.3
+
+              command:
+                - /bin/sh
+                - -c
+
+              args:
+                - |
+                  set -eux
+
+                  echo "=== Environment ==="
+                  hostname
+                  kubectl version --client || true
+
+                  echo "=== Internal health ==="
+
+                  curl --fail --silent --show-error \
+                    http://maas-uuid-service/readyz
+
+                  curl --fail --silent --show-error \
+                    http://maas-uuid-service/healthz
+
+                  echo "=== UUID generation ==="
+
+                  UUID=$(curl --fail --silent --show-error \
+                    http://maas-uuid-service/api/v1/uuid)
+
+                  echo "UUID=${UUID}"
+
+                  echo "${UUID}" | grep -Eq \
+                    '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+                  echo "=== External health ==="
+
+                  curl --insecure \
+                    --fail \
+                    --silent \
+                    --show-error \
+                    https://maas-uuid-service.e1-pfnet-lab-c.pnet.ch/healthz
+
+                  echo "Verification successful"
