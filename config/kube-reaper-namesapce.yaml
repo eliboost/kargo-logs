@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    argocd.argoproj.io/installation-id: lab-master
+    argocd.argoproj.io/sync-wave: "-10"
+    argocd.argoproj.io/tracking-id: e1-k8s-pfnet-lab-d-kube-reaper:/Namespace:kube-reaper/kube-reaper
+    burger.postfinance.ch/last-applied-monitoring-configuration: '{"receivers":{"email":{"to":["smlinux@postfinance.ch"]},"messageForwarder":{"disable":false,"to":"p1"}}}'
+    collectord.io/logs-index: sysinfracop
+    collectord.io/output: splunk
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{"argocd.argoproj.io/installation-id":"lab-master","argocd.argoproj.io/sync-wave":"-10","argocd.argoproj.io/tracking-id":"e1-k8s-pfnet-lab-d-kube-reaper:/Namespace:kube-reaper/kube-reaper","burger.postfinance.ch/last-applied-monitoring-configuration":"{\"receivers\":{\"email\":{\"to\":[\"smlinux@postfinance.ch\"]},\"messageForwarder\":{\"disable\":false,\"to\":\"p1\"}}}","collectord.io/logs-index":"sysinfracop","collectord.io/output":"splunk","postfinance.ch/application-owner-mail":"smlinux@postfinance.ch","postfinance.ch/operation-owner-mail":"smlinux@postfinance.ch","postfinance.ch/sys-appl":"ASMCOP"},"labels":{"app.kubernetes.io/instance":"kube-reaper","app.kubernetes.io/managed-by":"Helm","app.kubernetes.io/name":"pf-namespace","argocd.postfinance.ch/instance":"e1-k8s-pfnet-lab-d-kube-reaper","helm.sh/chart":"pf-namespace-v1.7.0"},"name":"kube-reaper"}}
+    postfinance.ch/application-owner-mail: smlinux@postfinance.ch
+    postfinance.ch/operation-owner-mail: smlinux@postfinance.ch
+    postfinance.ch/sys-appl: ASMCOP
+  creationTimestamp: "2026-09-21T06:56:50Z"
+  finalizers:
+  - burger.postfinance.ch/finalizer
+  - kargo.akuity.io/finalizer
+  labels:
+    app.kubernetes.io/instance: kube-reaper
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: pf-namespace
+    argocd.postfinance.ch/instance: e1-k8s-pfnet-lab-d-kube-reaper
+    helm.sh/chart: pf-namespace-v1.7.0
+    kargo.akuity.io/project: "true"
+    kubernetes.io/metadata.name: kube-reaper
+  name: kube-reaper
+  resourceVersion: "81603365"
+  uid: 51b5c84c-838a-401e-8bb8-1ba23e32af3c
+spec:
+  finalizers:
+  - kubernetes
+status:
+  phase: Active
