@@ -1,0 +1,32 @@
+nazarieli@w8xhb2 ~ % kubectx
+Switched to context "e1-k8s-pfnet-lab-c-admin".
+nazarieli@w8xhb2 ~ % kubectl -n kube-kargo-workloads get sa --show-labels | grep verification-launcher
+nazarieli@w8xhb2 ~ % J=$(kubectl -n kube-kargo-workloads get job --sort-by=.metadata.creationTimestamp -o name | grep onboarder | tail -1)
+nazarieli@w8xhb2 ~ % kubectl -n kube-kargo-workloads logs "$J" | tail -20
+error: You must provide one or more resources by argument or filename.
+Example resource specifications include:
+   '-f rsrc.yaml'
+   '--filename=rsrc.json'
+   '<resource> <name>'
+   '<resource>'
+nazarieli@w8xhb2 ~ % kubectl describe clusterpolicy kargo-launcher-onboarding | tail -30
+Warning: kyverno.io/v1 ClusterPolicy is deprecated and will be removed in a future release; migrate to ValidatingPolicy, MutatingPolicy, GeneratingPolicy or ImageValidatingPolicy (policies.kyverno.io), see https://kyverno.io/docs/guides/migration-to-cel/
+Error from server (NotFound): clusterpolicies.kyverno.io "kargo-launcher-onboarding" not found
+nazarieli@w8xhb2 ~ % kubectl -n kube-kargo-workloads get sa --show-labels | grep verification-launcher
+nazarieli@w8xhb2 ~ % J=$(kubectl -n kube-kargo-workloads get job --sort-by=.metadata.creationTimestamp -o name | grep onboarder | tail -1)
+kubectl -n kube-kargo-workloads logs "$J" | tail -20
+error: You must provide one or more resources by argument or filename.
+Example resource specifications include:
+   '-f rsrc.yaml'
+   '--filename=rsrc.json'
+   '<resource> <name>'
+   '<resource>'
+nazarieli@w8xhb2 ~ % kubectl describe clusterpolicy kargo-launcher-onboarding | tail -30
+Warning: kyverno.io/v1 ClusterPolicy is deprecated and will be removed in a future release; migrate to ValidatingPolicy, MutatingPolicy, GeneratingPolicy or ImageValidatingPolicy (policies.kyverno.io), see https://kyverno.io/docs/guides/migration-to-cel/
+Error from server (NotFound): clusterpolicies.kyverno.io "kargo-launcher-onboarding" not found
+nazarieli@w8xhb2 ~ % k get serviceaccount kargo-rollouts-verification-controller
+Error from server (NotFound): serviceaccounts "kargo-rollouts-verification-controller" not found
+nazarieli@w8xhb2 ~ % k get serviceaccount -n kube-kargo-workloads kargo-rollouts-verification-controller
+NAME                                     AGE
+kargo-rollouts-verification-controller   3h34m
+nazarieli@w8xhb2 ~ %
